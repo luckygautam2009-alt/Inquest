@@ -4,48 +4,63 @@ const { findRootCause } = require('../services/rootCauseEngine');
 const { decide } = require('../services/decisionEngine');
 const { buildHandoff } = require('../services/handoffEngine');
 const { buildEvidenceGraph } = require('../services/graphBuilder');
+const dataStore = require('../services/dataStore');
 
 async function submitComplaint(req, res) {
   const { complaintText, customerId } = req.body;
   const totalStart = Date.now();
 
-  const t0 = Date.now();
-  const investigation = investigate(customerId, complaintText);
-  const investigationMs = Date.now() - t0;
+  // Fast pre-flight customer check
+  const customerExists = dataStore.getCustomerById(customerId);
+  if (!customerExists) {
+    return res.status(404).json({
+      success: false,
+      error: `Customer not found: ${customerId}`,
+    });
+  }
+
+  // 1. Semantic understanding
+  const tAnalysisStart = Date.now();
+  const analysis = await analyzeComplaint(complaintText);
+  const complaintAnalysisMs = Date.now() - tAnalysisStart;
+
+  // 2. Customer investigation with entity hints (strictly isolated to customerId)
+  const tInvStart = Date.now();
+  const entityHints = [
+    analysis.orderReference,
+    ...(analysis.entities?.orderReferences || []),
+  ].filter(Boolean);
+
+  const investigation = investigate(customerId, complaintText, entityHints);
+  const investigationMs = Date.now() - tInvStart;
 
   if (!investigation.found) {
     return res.status(404).json({ success: false, error: investigation.error });
   }
 
-  const t1 = Date.now();
-  const analysis = await analyzeComplaint(complaintText);
-  const intentMs = Date.now() - t1;
-
-  const t2 = Date.now();
+  // 3. Root cause & policy evaluation
+  const tRcStart = Date.now();
   const rootCause = await findRootCause(complaintText, analysis, investigation);
-  const rootCauseMs = Date.now() - t2;
+  const rootCauseMs = Date.now() - tRcStart;
 
-  const t3 = Date.now();
+  // 4. Decision engine
+  const tDecStart = Date.now();
   const decision = decide(complaintText, analysis, rootCause, investigation);
-  const decisionMs = Date.now() - t3;
+  const decisionMs = Date.now() - tDecStart;
 
-  const t4 = Date.now();
-  const handoff = buildHandoff(investigation, rootCause, decision);
-  const handoffMs = Date.now() - t4;
-
-  const t5 = Date.now();
-  const evidenceGraph = buildEvidenceGraph(investigation, rootCause, decision);
-  const graphMs = Date.now() - t5;
+  // 5. Handoff generation & Evidence graph construction (run in parallel)
+  const tHandoffStart = Date.now();
+  const [handoff, evidenceGraph] = await Promise.all([
+    Promise.resolve(buildHandoff(investigation, rootCause, decision)),
+    Promise.resolve(buildEvidenceGraph(investigation, rootCause, decision)),
+  ]);
+  const handoffMs = Date.now() - tHandoffStart;
 
   const totalMs = Date.now() - totalStart;
 
-  console.log(`[complaint] investigation: ${investigationMs} ms`);
-  console.log(`[complaint] intent AI: ${intentMs} ms`);
-  console.log(`[complaint] root cause AI: ${rootCauseMs} ms`);
-  console.log(`[complaint] decision: ${decisionMs} ms`);
-  console.log(`[complaint] handoff: ${handoffMs} ms`);
-  console.log(`[complaint] evidence graph: ${graphMs} ms`);
-  console.log(`[complaint] total: ${totalMs} ms`);
+  console.log(
+    `[Inquest Timing] Investigation: ${investigationMs} ms | Complaint Analysis: ${complaintAnalysisMs} ms | Root Cause: ${rootCauseMs} ms | Decision: ${decisionMs} ms | Handoff: ${handoffMs} ms | Total: ${totalMs} ms`
+  );
 
   res.status(200).json({
     success: true,

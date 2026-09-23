@@ -21,15 +21,29 @@ function buildEvidenceGraph(investigation, rootCause, decision) {
   let lastId = complaintId;
 
   // 2. Prior tickets (if any)
-  investigation.tickets.forEach((ticket, i) => {
+  (investigation.tickets || []).forEach((ticket) => {
     const id = `ticket-${ticket.id}`;
     addNode(id, 'ticket', `Previous Ticket: ${ticket.subject}`, 'found', ticket);
     addEdge(lastId, id);
-    lastId = id; // chain sequentially
+    lastId = id;
   });
 
-  // 3. Focus payments (the core evidence for billing-type issues)
-  investigation.focusPayments.forEach((payment) => {
+  // 3. Security events (if any)
+  (investigation.securityEvents || []).forEach((sec) => {
+    const id = `security-${sec.id}`;
+    addNode(
+      id,
+      'security',
+      `Security Event: ${sec.eventType} (${sec.location || 'unknown'})`,
+      sec.flagged ? 'flagged' : 'verified',
+      sec
+    );
+    addEdge(lastId, id);
+    lastId = id;
+  });
+
+  // 4. Focus payments
+  (investigation.focusPayments || []).forEach((payment) => {
     const id = `payment-${payment.id}`;
     const mismatch = payment.gatewayStatus !== payment.localStatus;
     addNode(
@@ -43,7 +57,21 @@ function buildEvidenceGraph(investigation, rootCause, decision) {
     lastId = id;
   });
 
-  // 4. Focus order
+  // 5. Focus refunds (if any)
+  (investigation.focusRefunds || []).forEach((refund) => {
+    const id = `refund-${refund.id}`;
+    addNode(
+      id,
+      'refund',
+      `Refund ${refund.id} (₹${refund.amount})`,
+      refund.status === 'pending' ? 'flagged' : 'verified',
+      refund
+    );
+    addEdge(lastId, id);
+    lastId = id;
+  });
+
+  // 6. Focus order
   if (investigation.focusOrder) {
     const id = `order-${investigation.focusOrder.id}`;
     addNode(id, 'order', `Order ${investigation.focusOrder.id}`, 'found', investigation.focusOrder);
@@ -51,23 +79,23 @@ function buildEvidenceGraph(investigation, rootCause, decision) {
     lastId = id;
   }
 
-  // 5. Matched policy
+  // 7. Matched policy
   if (rootCause.matchedPolicy) {
-    const policy = investigation.policies.find((p) => p.id === rootCause.matchedPolicy);
+    const policy = (investigation.policies || []).find((p) => p.id === rootCause.matchedPolicy);
     const id = `policy-${rootCause.matchedPolicy}`;
     addNode(id, 'policy', policy ? policy.title : rootCause.matchedPolicy, 'matched', policy || {});
     addEdge(lastId, id);
     lastId = id;
   }
 
-  // 6. Root cause (the "analyzed" node)
+  // 8. Root cause
   const rootCauseId = addNode('root-cause', 'rootCause', 'Root Cause', 'analyzed', {
     rootCause: rootCause.rootCause,
     confidence: rootCause.confidence,
   });
   addEdge(lastId, rootCauseId);
 
-  // 7. Recommended action / decision
+  // 9. Recommended action / decision
   const actionId = addNode('recommended-action', 'action', 'Recommended Action', decision.decision, {
     decision: decision.decision,
     reasoning: decision.reasoning,

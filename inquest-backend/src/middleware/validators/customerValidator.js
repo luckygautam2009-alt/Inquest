@@ -12,6 +12,12 @@ const customerIdParamRules = [
 ];
 
 const createCustomerRules = [
+  body('id')
+    .optional()
+    .isString().withMessage('id must be a string')
+    .bail()
+    .trim()
+    .matches(/^[A-Za-z0-9_-]+$/).withMessage('id contains invalid characters'),
   body('name')
     .exists({ checkFalsy: true }).withMessage('name is required')
     .bail()
@@ -32,9 +38,21 @@ const createCustomerRules = [
     .trim()
     .toLowerCase()
     .isIn(['silver', 'gold', 'platinum']).withMessage('tier must be silver, gold, or platinum'),
+  body('joinedDate')
+    .optional()
+    .isISO8601().withMessage('joinedDate must be a valid date'),
   body('joinedOn')
     .optional()
     .isISO8601().withMessage('joinedOn must be a valid date'),
+  body('orders')
+    .optional()
+    .isArray().withMessage('orders must be an array'),
+  body('payments')
+    .optional()
+    .isArray().withMessage('payments must be an array'),
+  body('tickets')
+    .optional()
+    .isArray().withMessage('tickets must be an array'),
 ];
 
 module.exports = { customerIdParamRules, createCustomerRules };

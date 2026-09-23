@@ -1,151 +1,269 @@
 const { generateJSON } = require('./geminiService');
 
-const HINGLISH_MARKERS = /\b(bhai|yaar|nahi|nahin|gya|gyi|gaya|baar|kat|dekh|lo|mera|meri|kisi|abhi|tak|aaya|aayi|karne|do\s*baar|2\s*baar)\b/i;
-const DEVANAGARI = /[\u0900-\u097F]/;
+const VALID_TOP_LEVEL_INTENTS = [
+  'payment/billing',
+  'refund/return',
+  'cancellation',
+  'product_issue',
+  'order_status/delay',
+  'security/unauthorized_activity',
+  'other/ambiguous',
+];
 
-function detectLanguage(complaintText) {
-  const hasHindiScript = DEVANAGARI.test(complaintText);
-  const hasLatin = /[A-Za-z]/.test(complaintText);
-  if (hasHindiScript && hasLatin) return 'mixed';
-  if (hasHindiScript) return 'hi';
-  if (HINGLISH_MARKERS.test(complaintText)) return 'hinglish';
+const DEVANAGARI_REGEX = /[\u0900-\u097F]/;
+const HINGLISH_MARKERS = /\b(bhai|yaar|nahi|nahin|gya|gyi|gaya|gaye|baar|kat|dekh|lo|mera|meri|mere|kisi|abhi|tak|aaya|aayi|aaye|mila|karne|karo|paise|rupaye|khud|ho\s*gya|dikha\s*raha|bekaar|chahiye|wala)\b/i;
+
+function convertDevanagariDigits(str) {
+  if (!str) return str;
+  const devanagariDigits = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'];
+  let res = str;
+  for (let i = 0; i < 10; i++) {
+    res = res.replace(new RegExp(devanagariDigits[i], 'g'), String(i));
+  }
+  return res;
+}
+
+function detectLanguage(text) {
+  if (!text) return 'en';
+  const hasDevanagari = DEVANAGARI_REGEX.test(text);
+  const hasLatin = /[A-Za-z]/.test(text);
+  if (hasDevanagari && hasLatin) return 'mixed';
+  if (hasDevanagari) return 'hi';
+  if (HINGLISH_MARKERS.test(text)) return 'hinglish';
   return 'en';
 }
 
-function fallbackAnalysis(complaintText) {
-  const text = complaintText.toLowerCase();
-  const detectedLanguage = detectLanguage(complaintText);
+function extractEntitiesFromText(text) {
+  const normalized = convertDevanagariDigits(text);
+  const orderMatch =
+    normalized.match(/order\s*(?:id|no\.?|number|#)?\s*:?\s*([A-Za-z]*\d+[A-Za-z0-9]*)/i) ||
+    normalized.match(/(?:mera|meri)\s*([A-Za-z]*\d+[A-Za-z0-9]*)\s*wala\s*order/i) ||
+    normalized.match(/[ऑओ]र्ड[रर्]\s*(?:id|no\.?|#)?\s*:?\s*(\d+)/i) ||
+    normalized.match(/#\s*([A-Za-z]*\d+[A-Za-z0-9]*)/i) ||
+    normalized.match(/\b(ORDER\d+)\b/i) ||
+    normalized.match(/\b(\d{3,})\b/);
 
-  let intent = 'other';
+  const amountMatch =
+    normalized.match(/[₹$]\s*(\d+(?:,\d+)*(?:\.\d+)?)/) ||
+    normalized.match(/\b(\d+)\s*(?:rs|rupees|inr|रुपये)\b/i);
+
+  const paymentMatch = normalized.match(/\b(PAY\w+|\bUPI\w+|TXN\w+)\b/i);
+
+  return {
+    orderReference: orderMatch ? orderMatch[1].replace(/^ORDER/i, '') : null,
+    amount: amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null,
+    paymentReference: paymentMatch ? paymentMatch[1] : null,
+  };
+}
+
+function fallbackSemanticUnderstanding(complaintText) {
+  const normalized = convertDevanagariDigits(complaintText);
+  const text = normalized.toLowerCase();
+  const lang = detectLanguage(complaintText);
+  const extracted = extractEntitiesFromText(complaintText);
+
+  let intent = 'other/ambiguous';
   let subIntent = null;
-  let intentSummary = 'Could not analyze automatically';
-  let urgency = 'medium';
   let sentiment = 'frustrated';
+  let urgency = 'medium';
+  let confidence = 50;
+  const customerClaims = [complaintText.trim()];
 
-  const duplicatePayment =
-    /twice|duplicate|double\s*charg|charged\s*twice|2\s*baar|do\s*baar|दो\s*बार|kat g|कट गया|कट गयी/.test(text)
-    && /pay|payment|charged|debit|kat|पेमेंट|पेमेन्ट/.test(text);
-  const refund = /refund|वापस|रिफंड/.test(text);
-  const delivery = /deliver|in transit|nahi aaya|नहीं आया|अभी तक नहीं|shipping/.test(text);
-  const account = /account|login|hack|unauthorized|suspicious|kisi ne login|हैक|अकाउंट/.test(text);
-  const cancel = /cancel|रद्द/.test(text);
-  const ret = /return|वापस कर/.test(text) && !refund;
-
-  if (duplicatePayment || (/pay|billing|charged|पेमेंट/.test(text) && /twice|duplicate|2\s*baar|दो\s*बार/.test(text))) {
-    intent = 'billing';
-    subIntent = 'duplicate_payment';
-    intentSummary = 'Duplicate or incorrect payment on an order';
-    urgency = 'high';
-  } else if (refund) {
-    intent = 'billing';
-    subIntent = 'refund';
-    intentSummary = 'Refund not received';
-    urgency = 'high';
-  } else if (account) {
-    intent = 'account';
-    subIntent = 'suspicious_activity';
-    intentSummary = 'Possible unauthorized account activity';
-    urgency = 'high';
+  // 1. Security / unauthorized activity
+  if (
+    /\b(hack|hacked|hacking)\b|unauthorized|suspicious|log(?:ged|in|out)|password|account.*takeover|fraud|compromis|someone.*(?:using|accessing|logged).*account|koi aur login|kisi ne login|अनधिकृत|हैक|अकाउंट|सुरक्षा/i.test(text)
+  ) {
+    intent = 'security/unauthorized_activity';
+    subIntent = 'unauthorized_login_or_access';
     sentiment = 'angry';
-  } else if (delivery) {
-    intent = 'delivery';
-    subIntent = 'order_status';
-    intentSummary = 'Order not delivered or delayed';
-  } else if (ret) {
-    intent = 'product_quality';
-    subIntent = 'return';
-    intentSummary = 'Return related issue';
-  } else if (cancel) {
-    intent = 'other';
-    subIntent = 'cancellation';
-    intentSummary = 'Cancellation request';
-  } else if (/pay|billing|charged|पेमेंट/.test(text)) {
-    intent = 'billing';
-    intentSummary = 'Billing or payment issue';
+    urgency = 'high';
+    confidence = 88;
+  }
+  // 2. Cancellation
+  else if (/cancel|रद्द|कैंसिल|cancelling|cancellation|band kar|rok do/i.test(text)) {
+    intent = 'cancellation';
+    subIntent = 'order_cancellation';
+    confidence = 85;
+  }
+  // 3. Order status / delay / in transit
+  else if (
+    /(?:kya\s*status|status\s*kya|where\s*is|kab\s*aayega|kab\s*tak|late|delay|in\s*transit|track|tracking)\b/i.test(text) &&
+    !/(?:delivered|mila\s*nahi|not\s*received)/i.test(text)
+  ) {
+    intent = 'order_status/delay';
+    subIntent = 'order_status_tracking';
+    confidence = 85;
+  }
+  // 4. Delivered but not received / product issues
+  else if (
+    /(?:delivered|डिलीवर्ड|डिलीवर).*(?:nahi|not|never|mila|मिला|नहीं)|not received|never received|parcel.*not.*got|delivered dikha raha hai but mila nahi|पार्सल नहीं मिला|नहीं मिला/i.test(text)
+  ) {
+    intent = 'product_issue';
+    subIntent = 'delivered_not_received';
+    sentiment = 'angry';
+    urgency = 'high';
+    confidence = 85;
+  } else if (/damage|broken|kharab|tuta|खराब|टूटा|defective|faulty|quality.*bekaar|bekaar/i.test(text)) {
+    intent = 'product_issue';
+    subIntent = 'damaged_product';
+    confidence = 82;
+  } else if (/wrong|galat|different item|गलत/i.test(text)) {
+    intent = 'product_issue';
+    subIntent = 'wrong_product';
+    confidence = 82;
+  }
+  // 5. Refund / return
+  else if (/refund|रिफंड|wapas.*paise|money back|return/i.test(text)) {
+    intent = 'refund/return';
+    subIntent = 'refund_status_delay';
+    urgency = 'high';
+    confidence = 85;
+  }
+  // 6. Duplicate payment / billing / deduction
+  else if (
+    /twice|duplicate|double|2\s*baar|do\s*baar|दो\s*बार/i.test(text) &&
+    /pay|charged|debit|kat|कट गया|कट गयी|कट गए|पेमेंट|deduct/i.test(text)
+  ) {
+    intent = 'payment/billing';
+    subIntent = 'duplicate_payment';
+    sentiment = 'angry';
+    urgency = 'high';
+    confidence = 90;
+  } else if (
+    /kat\s*g|कट गया|कट गए|debit.*failed|money deducted|amount deducted|order nahi bana|order not placed|ऑर्डर कन्फर्म नहीं|deduct/i.test(text) &&
+    /pay|कट|debit|paise|पैसे|खाते/i.test(text)
+  ) {
+    intent = 'payment/billing';
+    subIntent = 'failed_payment';
+    urgency = 'high';
+    confidence = 85;
+  } else if (/pay|payment|billing|पेमेंट|पैसे/i.test(text)) {
+    intent = 'payment/billing';
+    subIntent = 'general_payment_query';
+    confidence = 65;
   }
 
-  const orderMatch = complaintText.match(/order\s*#?\s*([A-Za-z]*\d+)/i)
-    || complaintText.match(/[ऑओ]र्ड[रर्]\s*#?\s*(\d+)/i)
-    || complaintText.match(/\b(ORDER\d+)\b/i);
+  return validateAndFormatUnderstanding(
+    {
+      intent,
+      subIntent,
+      language: lang,
+      sentiment,
+      urgency,
+      orderReference: extracted.orderReference,
+      paymentReference: extracted.paymentReference,
+      refundReference: null,
+      amount: extracted.amount,
+      dates: [],
+      customerClaims,
+      confidence,
+    },
+    complaintText,
+    'fallback'
+  );
+}
+
+function validateAndFormatUnderstanding(raw, complaintText, source = 'ai') {
+  let intent = raw.intent;
+  // Normalize intent synonyms
+  if (intent === 'payment' || intent === 'billing') intent = 'payment/billing';
+  if (intent === 'refund' || intent === 'return') intent = 'refund/return';
+  if (intent === 'delivery' || intent === 'product_quality') intent = 'product_issue';
+  if (intent === 'account') intent = 'security/unauthorized_activity';
+
+  if (!VALID_TOP_LEVEL_INTENTS.includes(intent)) {
+    intent = 'other/ambiguous';
+  }
+
+  const sentiment = ['calm', 'frustrated', 'angry'].includes(raw.sentiment) ? raw.sentiment : 'frustrated';
+  const urgency = ['low', 'medium', 'high'].includes(raw.urgency) ? raw.urgency : 'medium';
+  const confidence = typeof raw.confidence === 'number' && !isNaN(raw.confidence)
+    ? Math.max(0, Math.min(100, Math.round(raw.confidence)))
+    : (intent === 'other/ambiguous' ? 40 : 80);
+
+  const lang = raw.language || detectLanguage(complaintText);
+  const fallbackExtracted = extractEntitiesFromText(complaintText);
+
+  const orderReference = raw.orderReference
+    ? convertDevanagariDigits(String(raw.orderReference).trim().replace(/^ORDER\s*#?/i, ''))
+    : fallbackExtracted.orderReference;
+
+  const paymentReference = raw.paymentReference || fallbackExtracted.paymentReference || null;
+  const amount = typeof raw.amount === 'number' ? raw.amount : fallbackExtracted.amount;
+  const subIntent = raw.subIntent || null;
+  const customerClaims = Array.isArray(raw.customerClaims) && raw.customerClaims.length > 0
+    ? raw.customerClaims
+    : [complaintText.trim()];
 
   return {
     intent,
-    intentSummary,
+    subIntent,
+    language: lang,
+    detectedLanguage: lang,
     sentiment,
     urgency,
-    urgencyReason: 'Inferred from complaint language and issue type',
-    source: 'fallback',
-    detectedLanguage,
-    subIntent,
+    orderReference,
+    paymentReference,
+    refundReference: raw.refundReference || null,
+    amount,
+    dates: Array.isArray(raw.dates) ? raw.dates : [],
+    customerClaims,
+    confidence,
+    intentSummary: `${intent}${subIntent ? ` - ${subIntent}` : ''}: ${customerClaims[0].slice(0, 80)}`,
+    source,
     entities: {
-      orderReferences: orderMatch ? [orderMatch[1]] : [],
-      paymentReferences: [],
-      amounts: [],
-      dates: [],
+      orderReferences: orderReference ? [orderReference] : [],
+      paymentReferences: paymentReference ? [paymentReference] : [],
+      amounts: amount ? [amount] : [],
+      dates: Array.isArray(raw.dates) ? raw.dates : [],
     },
   };
 }
 
 async function analyzeComplaint(complaintText) {
-  const prompt = `You are an AI system analyzing customer support complaints for an e-commerce platform.
+  const prompt = `You are the Semantic Understanding Engine of an AI customer support investigation system.
+The customer complaint may be in English, Hindi (Devanagari), Hinglish (Hindi written in Latin script), or mixed language. Text may contain typos, slang, missing punctuation, or colloquialisms.
 
-The complaint may be in English, Hindi (Devanagari), Hinglish, or mixed Hindi-English.
-Understand meaning, intent, and entities from the original text. Do NOT merely translate.
-Preserve the original wording in your understanding. Examples of meaning (do not treat these as the only valid sentences):
-- "bhai payment 2 baar kat gyi order 456 ki" → billing / duplicate payment, order 456
-- "refund abhi tak nahi aaya yaar" → refund
-- "mera account kisi ne login karne ki try ki" → account security / suspicious activity
-- "order abhi tak nahi aaya" → delivery / order status
-- "मेरे ऑर्डर 456 का पेमेंट दो बार कट गया।" → billing / duplicate payment, order 456
+Analyze the complaint and classify it into one of these strict top-level intents:
+- "payment/billing": billing, duplicate charges, amount debited but order failed, unauthorized charges
+- "refund/return": refund delayed, refund status, return refund pending, return request
+- "cancellation": order cancellation query or cancellation status
+- "product_issue": damaged product, poor quality, wrong product, delivered but not received
+- "order_status/delay": tracking status, where is my order, shipping delay
+- "security/unauthorized_activity": suspicious login, hacked account, unauthorized device/location access
+- "other/ambiguous": unclear, unsupported, or out-of-scope text (e.g. sponsorship, greetings)
 
-Analyze the following customer complaint and return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:
-
+Return ONLY a valid JSON object with this exact structure:
 {
-  "intent": "billing" | "technical" | "delivery" | "product_quality" | "account" | "other",
-  "subIntent": "duplicate_payment" | "refund" | "delivery" | "return" | "cancellation" | "account_security" | "suspicious_activity" | "order_status" | null,
-  "intentSummary": "one short sentence describing the issue in English",
+  "intent": "payment/billing" | "refund/return" | "cancellation" | "product_issue" | "order_status/delay" | "security/unauthorized_activity" | "other/ambiguous",
+  "subIntent": "short_snake_case_string_describing_specific_subtype",
+  "language": "en" | "hi" | "hinglish" | "mixed",
   "sentiment": "calm" | "frustrated" | "angry",
   "urgency": "low" | "medium" | "high",
-  "urgencyReason": "one short sentence explaining why",
-  "detectedLanguage": "en" | "hi" | "hinglish" | "mixed",
-  "entities": {
-    "orderReferences": ["order ids or numbers mentioned, e.g. 456 or ORDER456"],
-    "paymentReferences": [],
-    "amounts": [],
-    "dates": []
-  }
+  "orderReference": "order id or number mentioned (e.g. '456', 'ORDER789') or null",
+  "amount": numeric amount if mentioned or null,
+  "dates": ["dates mentioned or empty array"],
+  "customerClaims": ["concise bullet points of factual claims customer is making"],
+  "confidence": <integer between 0 and 100 representing classification confidence>
 }
 
 Customer complaint:
 """${complaintText}"""
-
-Return ONLY the JSON object.`;
+`;
 
   try {
-    const result = await generateJSON(prompt);
-    const fallback = fallbackAnalysis(complaintText);
-    return {
-      intent: result.intent || fallback.intent,
-      intentSummary: result.intentSummary || fallback.intentSummary,
-      sentiment: result.sentiment || 'calm',
-      urgency: result.urgency || 'medium',
-      urgencyReason: result.urgencyReason || 'Not specified',
-      source: 'ai',
-      detectedLanguage: result.detectedLanguage || fallback.detectedLanguage,
-      subIntent: result.subIntent || fallback.subIntent,
-      entities: {
-        orderReferences: result.entities?.orderReferences?.length
-          ? result.entities.orderReferences
-          : fallback.entities.orderReferences,
-        paymentReferences: result.entities?.paymentReferences || [],
-        amounts: result.entities?.amounts || [],
-        dates: result.entities?.dates || [],
-      },
-    };
+    const raw = await generateJSON(prompt);
+    return validateAndFormatUnderstanding(raw, complaintText, 'ai');
   } catch (err) {
-    console.error('[intentEngine] AI analysis failed, using fallback:', err.message);
-    return fallbackAnalysis(complaintText);
+    console.warn('[intentEngine] AI understanding failed or skipped, running semantic fallback:', err.message);
+    return fallbackSemanticUnderstanding(complaintText);
   }
 }
 
-module.exports = { analyzeComplaint };
+module.exports = {
+  analyzeComplaint,
+  detectLanguage,
+  extractEntitiesFromText,
+  fallbackSemanticUnderstanding,
+  convertDevanagariDigits,
+};

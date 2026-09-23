@@ -7,19 +7,16 @@ if (!config.geminiApiKey) {
 
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
-// Prefer models that fail fast or succeed. Do not include models that hang
-// (gemini-3.5-flash-lite / gemini-flash-lite-latest hang until timeout).
+// Fastest available models in prioritized order.
 const MODEL_CHAIN = [
   'gemini-3.6-flash',
   'gemini-3.8-flash',
   'gemini-3.5-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-3-flash-preview',
+  'gemini-flash-latest',
 ];
 
-const PER_MODEL_TIMEOUT_MS = 5000;
-const RETRY_TIMEOUT_MS = 2000;
-const OVERALL_BUDGET_MS = 6000;
+const PER_MODEL_TIMEOUT_MS = 2500;
+const OVERALL_BUDGET_MS = 3000;
 const SKIP_429_MS = 2 * 60 * 1000;
 const SKIP_404_MS = 24 * 60 * 60 * 1000;
 const SKIP_TIMEOUT_MS = 60 * 1000;
@@ -27,10 +24,9 @@ const SKIP_TIMEOUT_MS = 60 * 1000;
 const skipUntil = new Map();
 
 const generationConfig = {
-  temperature: 0.2,
+  temperature: 0.1,
   maxOutputTokens: 512,
   responseMimeType: 'application/json',
-  thinkingConfig: { thinkingBudget: 0 },
 };
 
 function sleep(ms) {
@@ -84,27 +80,26 @@ async function generateContent(prompt) {
     }
 
     const model = genAI.getGenerativeModel({ model: modelName, generationConfig });
-    const remainingModels = MODEL_CHAIN.filter((name) => name !== modelName && !shouldSkip(name));
-    const maxAttempts = remainingModels.length === 0 ? 2 : 1;
+    const maxAttempts = 1; // Never retry on 429, fast fail-forward
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const timeoutMs = attempt === 1 ? PER_MODEL_TIMEOUT_MS : RETRY_TIMEOUT_MS;
+        const timeoutMs = Math.min(PER_MODEL_TIMEOUT_MS, Math.max(800, OVERALL_BUDGET_MS - (Date.now() - started)));
         const result = await withTimeout(
           model.generateContent(prompt),
           timeoutMs,
           `Model ${modelName} timed out after ${timeoutMs}ms`
         );
         const text = result.response.text();
-        console.log(`[gemini] ${modelName} ok in ${Date.now() - started} ms`);
+        console.log(`[gemini] ${modelName} succeeded in ${Date.now() - started} ms`);
         return text;
       } catch (err) {
         lastError = err;
-        console.warn(`[gemini] ${modelName} attempt ${attempt} failed: ${err.message.slice(0, 180)}`);
+        console.warn(`[gemini] ${modelName} failed: ${err.message.slice(0, 140)}`);
 
         if (isQuotaError(err)) {
           markSkip(modelName, SKIP_429_MS, 'quota/429');
-          break;
+          break; // Skip immediately without backoff
         }
         if (isUnavailableError(err)) {
           markSkip(modelName, SKIP_404_MS, 'unavailable/404');
@@ -114,8 +109,9 @@ async function generateContent(prompt) {
           markSkip(modelName, SKIP_TIMEOUT_MS, 'timeout');
           break;
         }
-        if (isTransientError(err) && attempt < maxAttempts) {
-          await sleep(300);
+        if (isTransientError(err)) {
+          // If transient 503, brief pause
+          await sleep(150);
           continue;
         }
         break;
@@ -123,7 +119,7 @@ async function generateContent(prompt) {
     }
   }
 
-  throw lastError || new Error('All Gemini models failed or were skipped');
+  throw lastError || new Error('All Gemini models skipped or quota exhausted');
 }
 
 async function generateJSON(prompt) {

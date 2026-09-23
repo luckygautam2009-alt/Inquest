@@ -1,83 +1,179 @@
 /**
- * Decides the resolution path based on urgency, confidence, and risk —
- * NOT sentiment alone. This is the core "intelligent decoupling" logic.
+ * Decision Engine: Decides the resolution path based on verified evidence,
+ * policies, confidence, and category safety — NEVER sentiment alone.
  *
- * Rules:
- * - High-risk keywords (fraud/security) => always HUMAN_ESCALATION
- * - product_quality intent => never AUTO_RESOLVE, even at high confidence,
- *   because the only "evidence" is the customer's own claim (no objective
- *   system log like a payment gateway record) — physical damage claims
- *   need human/photo verification before a refund/replacement is issued.
- * - High confidence (>=85) + policy matched + not high-risk/product_quality => AUTO_RESOLVE
- * - Medium confidence (60-84) or ambiguous evidence => CUSTOMER_CONFIRM
- * - Low confidence (<60) OR no policy match => HUMAN_ESCALATION
+ * Invariants:
+ * 1. Claims vs Evidence: LLM output is claim; only dataStore is evidence.
+ * 2. Customer Isolation: customerId is security boundary.
+ * 3. Ownership check is deterministic and mandatory: If failed => HUMAN_ESCALATION, confidence 0.
+ * 4. No Fabrication: Missing evidence => HUMAN_ESCALATION with clear statement.
+ * 5. Security/Unauthorized Activity: NEVER AUTO_RESOLVE under any circumstance.
+ * 6. High Confidence alone NEVER triggers AUTO_RESOLVE without satisfied evidence & policy.
  */
 
-const HIGH_RISK_KEYWORDS = /fraud|unauthorized|hack|stolen|security|suspicious|account takeover|identity|login karne|kisi ne login|हैक|अनधिकृत|अकाउंट/i;
+const PHYSICAL_VERIFICATION_INTENTS = [
+  'product_issue',
+  'product_quality',
+];
 
 function decide(complaintText, analysis, rootCause, investigation) {
   const { confidence, matchedPolicy } = rootCause;
-  const isHighRisk = HIGH_RISK_KEYWORDS.test(complaintText)
-    || analysis.intent === 'account'
-    || analysis.subIntent === 'account_security'
-    || analysis.subIntent === 'suspicious_activity';
-  const requiresPhysicalVerification = analysis.intent === 'product_quality';
+  const intent = analysis.intent;
+  const subIntent = analysis.subIntent;
 
-  // SAFETY GUARD: Order mismatch — always escalate
+  // SAFETY GUARD 1: Order ownership check failed (Mandatory isolation boundary)
   if (investigation && investigation.orderMismatch) {
     return {
       decision: 'HUMAN_ESCALATION',
-      reasoning: `Referenced order #${investigation.orderHintDetected} does not belong to customer ${investigation.customer.id} — customer/order mismatch requires human verification.`,
+      reasoning: `Order #${investigation.orderHintDetected} could not be verified for customer ${investigation.customer.id}. Customer isolation boundary enforced; cross-customer access is prohibited.`,
       confidence: 0,
-      sentimentNote: `Note: decision was based on evidence/confidence, not sentiment (${analysis.sentiment}) alone.`,
+      sentimentNote: `Note: Decision based strictly on customer order ownership verification, not sentiment (${analysis.sentiment}).`,
     };
   }
 
-  // SAFETY GUARD: Verify evidence supports AUTO_RESOLVE before allowing it
+  // SAFETY GUARD 2: Security & unauthorized activity (Mandatory Escalation)
+  const isSecurity =
+    intent === 'security/unauthorized_activity' ||
+    intent === 'account' ||
+    subIntent === 'suspicious_activity' ||
+    subIntent === 'account_security' ||
+    subIntent === 'unauthorized_login_or_access' ||
+    matchedPolicy === 'POLICY9';
+
+  if (isSecurity) {
+    return {
+      decision: 'HUMAN_ESCALATION',
+      reasoning: 'Security and unauthorized activity claims require mandatory manual review by Security Operations — never auto-resolved regardless of confidence score.',
+      confidence,
+      sentimentNote: `Note: Escalated per security policy POLICY9, not sentiment (${analysis.sentiment}).`,
+    };
+  }
+
+  // SAFETY GUARD 3: Physical verification required (Damaged, wrong product, delivery dispute)
+  const isPhysicalVerification =
+    PHYSICAL_VERIFICATION_INTENTS.includes(intent) ||
+    ['POLICY6', 'POLICY8', 'POLICY10'].includes(matchedPolicy);
+
+  if (isPhysicalVerification) {
+    const isCarrierDispute = matchedPolicy === 'POLICY10' || subIntent === 'delivered_not_received';
+    return {
+      decision: 'HUMAN_ESCALATION',
+      reasoning: isCarrierDispute
+        ? 'Carrier tracking marks delivery but customer disputes receipt. Requires logistics proof-of-delivery (POD) verification before financial resolution.'
+        : 'Product condition and delivery claims rely on unverified customer claims and require photo or reverse pickup verification prior to refund.',
+      confidence,
+      sentimentNote: `Note: Physical verification required by policy; not sentiment (${analysis.sentiment}).`,
+    };
+  }
+
+  // SAFETY GUARD 4: Policy coverage missing or ambiguous intent
+  if (!matchedPolicy || intent === 'other/ambiguous') {
+    return {
+      decision: 'HUMAN_ESCALATION',
+      reasoning: !matchedPolicy
+        ? `No active policy matches intent "${intent}". Requires human support agent to review policy coverage.`
+        : 'Complaint text is ambiguous or lacks verified transaction evidence; requires human review.',
+      confidence,
+      sentimentNote: `Note: Decision based on missing policy coverage/evidence, not sentiment (${analysis.sentiment}).`,
+    };
+  }
+
+  // Check the 6 AUTO_RESOLVE criteria:
+  // 1. Customer verified (checked in investigation.found)
+  // 2. Order verified for customer (if order-related intent)
+  const orderRequired = ['payment/billing', 'payment', 'cancellation', 'refund/return', 'refund', 'order_status/delay'].includes(intent);
+  const orderVerified = investigation.orderVerified && investigation.focusOrder?.customerId === investigation.customer.id;
+
+  // 3. Matched policy exists (verified above)
+  // 4. Policy conditions satisfied by verified evidence
   let evidenceSatisfied = true;
-  let safetyFailureReason = '';
+  let policyFailureReason = '';
 
   if (matchedPolicy === 'POLICY7') {
-    // Duplicate Payment Refund requires: verified order + known amount + multiple payments
-    if (!investigation || !investigation.focusOrder || investigation.focusOrder.customerId !== investigation.customer.id) {
+    // Duplicate payment: order verified, amount known, >= 2 successful payments
+    const successfulPayments = (investigation.focusPayments || []).filter(
+      (p) => (p.status === 'success' || p.gatewayStatus === 'success') && p.customerId === investigation.customer.id
+    );
+    if (!orderVerified) {
       evidenceSatisfied = false;
-      safetyFailureReason = 'Missing verified order belonging to customer.';
-    } else if (typeof investigation.focusOrder.amount !== 'number' || investigation.focusOrder.amount <= 0) {
+      policyFailureReason = 'Missing verified customer order.';
+    } else if (successfulPayments.length < 2) {
       evidenceSatisfied = false;
-      safetyFailureReason = 'Unknown monetary amount for order.';
-    } else if (!investigation.focusPayments || investigation.focusPayments.length < 2) {
+      policyFailureReason = 'Payment gateway records do not confirm multiple successful charges for this order.';
+    }
+  } else if (matchedPolicy === 'POLICY1') {
+    // Mismatched payment status
+    const deductedFailed = (investigation.focusPayments || investigation.payments || []).filter(
+      (p) => p.gatewayStatus === 'success' && p.localStatus === 'failed'
+    );
+    if (deductedFailed.length === 0) {
       evidenceSatisfied = false;
-      safetyFailureReason = 'Payment evidence does not establish duplicate transactions for this order.';
+      policyFailureReason = 'No gateway deduction with failed local order found.';
+    }
+  } else if (matchedPolicy === 'POLICY2') {
+    // Pending refund: refund record exists and status === 'pending'
+    const pendingRefund = (investigation.focusRefunds || investigation.refunds || []).find(
+      (r) => r.customerId === investigation.customer.id && r.status === 'pending'
+    );
+    if (!pendingRefund) {
+      evidenceSatisfied = false;
+      policyFailureReason = 'No pending refund record found in backend.';
+    }
+  } else if (matchedPolicy === 'POLICY4') {
+    // Return received refund eligibility
+    if (!investigation.focusOrder || (investigation.focusOrder.status !== 'returned' && investigation.focusOrder.returnStatus !== 'item_received_warehouse')) {
+      evidenceSatisfied = false;
+      policyFailureReason = 'Order is not verified as returned in logistics system.';
+    }
+  } else if (matchedPolicy === 'POLICY5') {
+    // Cancelled order
+    if (!investigation.focusOrder || investigation.focusOrder.status !== 'cancelled') {
+      evidenceSatisfied = false;
+      policyFailureReason = 'Order is not recorded as cancelled in backend.';
+    }
+  } else if (matchedPolicy === 'POLICY11') {
+    // Order in-transit status
+    if (!investigation.focusOrder || (investigation.focusOrder.status !== 'in_transit' && !investigation.focusOrder.courierTracking)) {
+      evidenceSatisfied = false;
+      policyFailureReason = 'Order is not in transit.';
+    }
+  } else if (matchedPolicy === 'POLICY3') {
+    // Return window
+    if (!investigation.focusOrder || investigation.focusOrder.status !== 'delivered') {
+      evidenceSatisfied = false;
+      policyFailureReason = 'Order is not delivered or return already requested.';
     }
   }
 
-  let decision;
-  let reasoning;
-
-  if (isHighRisk) {
-    decision = 'HUMAN_ESCALATION';
-    reasoning = 'Complaint contains high-risk signals (fraud/security related) — requires human judgment regardless of confidence.';
-  } else if (requiresPhysicalVerification) {
-    decision = confidence >= 60 ? 'CUSTOMER_CONFIRM' : 'HUMAN_ESCALATION';
-    reasoning = 'Product quality/damage claims rely only on the customer\'s own account, not an objective system log — never auto-resolved without verification.';
-  } else if (confidence >= 85 && matchedPolicy && evidenceSatisfied) {
-    decision = 'AUTO_RESOLVE';
-    reasoning = `High confidence (${confidence}%) with clear policy match (${matchedPolicy}) — safe to resolve automatically.`;
-  } else if (confidence >= 60 && evidenceSatisfied) {
-    decision = 'CUSTOMER_CONFIRM';
-    reasoning = `Moderate confidence (${confidence}%) — system suggests a resolution but needs customer approval before acting.`;
-  } else {
-    decision = 'HUMAN_ESCALATION';
-    reasoning = safetyFailureReason
-      ? `${safetyFailureReason} Requires human investigation.`
-      : `Low confidence (${confidence}%) or no clear policy match — needs human investigation.`;
+  // 5. Confidence threshold: >= 85
+  // 6. Category safe for automation (not security, not damage dispute)
+  if (confidence >= 85 && evidenceSatisfied && (orderVerified || !orderRequired)) {
+    return {
+      decision: 'AUTO_RESOLVE',
+      reasoning: `High confidence (${confidence}%) and verified evidence satisfies policy ${matchedPolicy} conditions for customer ${investigation.customer.id}. Safe for automated resolution.`,
+      confidence,
+      sentimentNote: `Note: Decision based strictly on verified records and policy criteria, not sentiment (${analysis.sentiment}).`,
+    };
   }
 
+  // Medium confidence or needs customer approval (e.g. return initiation or cancellation verification)
+  if (confidence >= 60 && evidenceSatisfied) {
+    return {
+      decision: 'CUSTOMER_CONFIRM',
+      reasoning: `Verified records match policy ${matchedPolicy} with ${confidence}% confidence, but customer confirmation is recommended before finalizing.`,
+      confidence,
+      sentimentNote: `Note: Decision based on policy requirements, not sentiment (${analysis.sentiment}).`,
+    };
+  }
+
+  // Otherwise, escalate
   return {
-    decision,
-    reasoning,
+    decision: 'HUMAN_ESCALATION',
+    reasoning: policyFailureReason
+      ? `${policyFailureReason} Insufficient verified evidence to auto-resolve.`
+      : `Confidence score (${confidence}%) below automation threshold or evidence incomplete. Requires human investigation.`,
     confidence,
-    sentimentNote: `Note: decision was based on evidence/confidence, not sentiment (${analysis.sentiment}) alone.`,
+    sentimentNote: `Note: Decision based on verified evidence completeness, not sentiment (${analysis.sentiment}).`,
   };
 }
 
