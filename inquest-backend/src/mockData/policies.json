@@ -1,0 +1,23 @@
+[
+  {
+    "id": "POLICY7",
+    "title": "Duplicate Payment Refund",
+    "condition": "duplicate_payment",
+    "eligibleWithinDays": 7,
+    "description": "Customers are eligible for a full refund if a duplicate payment is detected within 7 days of transaction."
+  },
+  {
+    "id": "POLICY3",
+    "title": "Return & Exchange",
+    "condition": "delivered_no_return_requested",
+    "eligibleWithinDays": 10,
+    "description": "Products can be returned within 10 days of delivery if unused and undamaged."
+  },
+  {
+    "id": "POLICY9",
+    "title": "Account Security Review",
+    "condition": "suspicious_activity",
+    "eligibleWithinDays": null,
+    "description": "Any suspected unauthorized account access must be escalated to the security team for manual review before any account or payment action is taken."
+  }
+]

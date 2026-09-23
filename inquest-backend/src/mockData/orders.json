@@ -1,0 +1,38 @@
+[
+  {
+    "id": "ORDER456",
+    "customerId": "CUST001",
+    "product": "Wireless Earbuds",
+    "amount": 1499,
+    "status": "delivered",
+    "deliveredOn": "2026-09-10",
+    "returnRequested": false
+  },
+  {
+    "id": "ORDER789",
+    "customerId": "CUST002",
+    "product": "Smart Watch",
+    "amount": 3499,
+    "status": "in_transit",
+    "deliveredOn": null,
+    "returnRequested": false
+  },
+  {
+    "id": "ORDER101",
+    "customerId": "CUST003",
+    "product": "Bluetooth Speaker",
+    "amount": 2199,
+    "status": "delivered",
+    "deliveredOn": "2026-09-05",
+    "returnRequested": true
+  },
+  {
+    "id": "ORDER202",
+    "customerId": "CUST004",
+    "product": "Laptop Sleeve",
+    "amount": 899,
+    "status": "delivered",
+    "deliveredOn": "2026-08-01",
+    "returnRequested": false
+  }
+]

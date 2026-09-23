@@ -1,0 +1,18 @@
+[
+  {
+    "id": "TICKET001",
+    "customerId": "CUST001",
+    "subject": "Similar duplicate charge issue",
+    "status": "resolved",
+    "resolvedOn": "2026-06-15",
+    "resolution": "Refund issued for duplicate payment"
+  },
+  {
+    "id": "TICKET002",
+    "customerId": "CUST004",
+    "subject": "Late delivery complaint",
+    "status": "resolved",
+    "resolvedOn": "2026-07-20",
+    "resolution": "Goodwill credit issued"
+  }
+]
