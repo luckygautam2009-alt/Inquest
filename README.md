@@ -6,7 +6,7 @@ INQUEST is an AI-powered complaint resolution system where every customer compla
 
 ---
 
-## 🏗️ Project Architecture
+##  Project Architecture
 
 ```
 Inquest/
@@ -31,7 +31,7 @@ Inquest/
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### 1. Backend Setup
 
@@ -56,7 +56,7 @@ Frontend will run on [http://localhost:5173](http://localhost:5173).
 
 ---
 
-## ⚡ Tech Stack
+## Tech Stack
 
 - **Frontend**: React 19, Vite, Tailwind CSS, Lucide Icons, ReactFlow
 - **Backend**: Node.js, Express, Helmet, CORS, Express Rate Limit
