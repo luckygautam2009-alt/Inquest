@@ -1,11 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { getCustomerContext, listCustomers, createCustomer } = require('../controllers/context.controller');
-const { customerIdParamRules, createCustomerRules } = require('../middleware/validators/customerValidator');
+const { getCustomerContext } = require('../controllers/context.controller');
+const { listCustomers, createCustomer } = require('../controllers/customer.controller');
+const { customerIdParamRules } = require('../middleware/validators/customerValidator');
+const { newCustomerValidationRules } = require('../middleware/validators/newCustomerValidator');
 const { validate } = require('../middleware/validate');
 
 router.get('/', listCustomers);
-router.post('/', createCustomerRules, validate, createCustomer);
+router.post('/', newCustomerValidationRules, validate, createCustomer);
 router.get('/:customerId/context', customerIdParamRules, validate, getCustomerContext);
 
 module.exports = router;
