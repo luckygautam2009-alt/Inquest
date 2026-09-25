@@ -5,7 +5,8 @@ import ResultPanel from './components/ResultPanel';
 import EvidenceGraph from './components/EvidenceGraph';
 import LoadingSkeleton from './components/LoadingSkeleton';
 import { useTheme } from './hooks/useTheme';
-import { Scale, Activity, ChevronRight, Sun, Moon } from 'lucide-react';
+import AdminPanel from './components/AdminPanel';
+import { Scale, Activity, ChevronRight, Sun, Moon, ShieldCheck } from 'lucide-react';
 
 export default function App() {
   const [result, setResult] = useState(null);
@@ -13,6 +14,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [caseId] = useState(() => `CASE-${Date.now().toString(36).toUpperCase()}`);
   const { theme, toggleTheme } = useTheme();
+  const [showAdmin, setShowAdmin] = useState(false);
 
   async function handleSubmit(customerId, complaintText) {
     setLoading(true);
@@ -56,6 +58,17 @@ export default function App() {
                 <span className="text-muted font-mono">· {caseId}</span>
               </div>
             )}
+
+            {/* Admin Panel Button */}
+            <button
+              type="button"
+              onClick={() => setShowAdmin(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-ink-light hover:bg-ink-lighter border border-border-strong text-paper text-xs font-semibold transition-all duration-150 cursor-pointer shadow-xs"
+              title="Open admin panel"
+            >
+              <ShieldCheck className="w-4 h-4 text-amber" />
+              <span className="hidden sm:inline">Admin</span>
+            </button>
 
             {/* Theme Toggle Button */}
             <button
@@ -230,6 +243,8 @@ export default function App() {
           <span>Built with Node.js · Google Gemini · React · ReactFlow</span>
         </div>
       </footer>
+
+      {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
     </div>
   );
 }

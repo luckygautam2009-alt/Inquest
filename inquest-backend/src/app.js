@@ -9,6 +9,8 @@ const { notFound, errorHandler } = require('./middleware/errorHandler');
 const healthRoutes = require('./routes/health.routes');
 const contextRoutes = require('./routes/context.routes');
 const complaintRoutes = require('./routes/complaint.routes');
+const verificationRoutes = require('./routes/verification.routes');
+const adminRoutes = require('./routes/admin.routes');
 
 const app = express();
 
@@ -21,6 +23,8 @@ app.use('/api', apiLimiter);
 app.use('/api/health', healthRoutes);
 app.use('/api/customers', contextRoutes);
 app.use('/api/complaints', complaintRoutes);
+app.use('/api/verify', verificationRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

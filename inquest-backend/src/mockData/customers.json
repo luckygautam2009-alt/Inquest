@@ -30,5 +30,13 @@
     "tier": "silver",
     "joinedDate": "2025-03-15",
     "joinedOn": "2025-03-15"
+  },
+  {
+    "id": "CUST005",
+    "name": "shobhit",
+    "email": "luckygautam2009@gmail.com",
+    "tier": "silver",
+    "joinedDate": "2026-09-24",
+    "joinedOn": "2026-09-24"
   }
 ]

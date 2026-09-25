@@ -7,125 +7,98 @@ if (!config.geminiApiKey) {
 
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
-// Fastest available models in prioritized order.
-const MODEL_CHAIN = [
-  'gemini-3.6-flash',
-  'gemini-3.8-flash',
-  'gemini-3.5-flash',
-  'gemini-flash-latest',
-];
-
-const PER_MODEL_TIMEOUT_MS = 2500;
-const OVERALL_BUDGET_MS = 3000;
-const SKIP_429_MS = 2 * 60 * 1000;
-const SKIP_404_MS = 24 * 60 * 60 * 1000;
-const SKIP_TIMEOUT_MS = 60 * 1000;
-
-const skipUntil = new Map();
-
-const generationConfig = {
-  temperature: 0.1,
-  maxOutputTokens: 512,
-  responseMimeType: 'application/json',
-};
+const MODEL_CHAIN = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
+const VISION_MODEL_CHAIN = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
+const CALL_TIMEOUT_MS = 12000;
+const VISION_TIMEOUT_MS = 20000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function withTimeout(promise, ms, message) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-function isQuotaError(err) {
-  return /429|rate limit|quota|resource_exhausted/i.test(err.message);
-}
-
 function isTransientError(err) {
-  return /503|overloaded|high demand/i.test(err.message);
+  return /503|overloaded|high demand|429|rate limit|quota|resource_exhausted/i.test(err.message);
 }
 
-function isUnavailableError(err) {
-  return /404|not found|no longer available/i.test(err.message);
-}
-
-function isTimeoutError(err) {
-  return /timed out/i.test(err.message);
-}
-
-function shouldSkip(modelName) {
-  const until = skipUntil.get(modelName);
-  return Boolean(until && Date.now() < until);
-}
-
-function markSkip(modelName, durationMs, reason) {
-  skipUntil.set(modelName, Date.now() + durationMs);
-  console.warn(`[gemini] skipping ${modelName} for ${Math.round(durationMs / 1000)}s (${reason})`);
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), ms)),
+  ]);
 }
 
 async function generateContent(prompt) {
   let lastError;
-  const started = Date.now();
-
   for (const modelName of MODEL_CHAIN) {
-    if (Date.now() - started > OVERALL_BUDGET_MS) {
-      break;
-    }
-    if (shouldSkip(modelName)) {
-      continue;
-    }
-
-    const model = genAI.getGenerativeModel({ model: modelName, generationConfig });
-    const maxAttempts = 1; // Never retry on 429, fast fail-forward
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const model = genAI.getGenerativeModel({ model: modelName });
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const timeoutMs = Math.min(PER_MODEL_TIMEOUT_MS, Math.max(800, OVERALL_BUDGET_MS - (Date.now() - started)));
-        const result = await withTimeout(
-          model.generateContent(prompt),
-          timeoutMs,
-          `Model ${modelName} timed out after ${timeoutMs}ms`
-        );
-        const text = result.response.text();
-        console.log(`[gemini] ${modelName} succeeded in ${Date.now() - started} ms`);
-        return text;
+        const result = await withTimeout(model.generateContent(prompt), CALL_TIMEOUT_MS);
+        return result.response.text();
       } catch (err) {
         lastError = err;
-        console.warn(`[gemini] ${modelName} failed: ${err.message.slice(0, 140)}`);
-
-        if (isQuotaError(err)) {
-          markSkip(modelName, SKIP_429_MS, 'quota/429');
-          break; // Skip immediately without backoff
-        }
-        if (isUnavailableError(err)) {
-          markSkip(modelName, SKIP_404_MS, 'unavailable/404');
-          break;
-        }
-        if (isTimeoutError(err)) {
-          markSkip(modelName, SKIP_TIMEOUT_MS, 'timeout');
-          break;
-        }
-        if (isTransientError(err)) {
-          // If transient 503, brief pause
-          await sleep(150);
+        if (isTransientError(err) && attempt === 1) {
+          await sleep(400);
           continue;
         }
         break;
       }
     }
   }
+  throw lastError;
+}
 
-  throw lastError || new Error('All Gemini models skipped or quota exhausted');
+/**
+ * Vision calls (ID verification) use a shorter model chain and a hard
+ * per-attempt timeout, since this path is on the critical path of a
+ * live scanning UI — it must fail fast rather than hang.
+ */
+async function generateVisionContent(prompt, images) {
+  let lastError;
+  const parts = [
+    { text: prompt },
+    ...images.map((img) => ({ inlineData: { data: img.data, mimeType: img.mimeType } })),
+  ];
+
+  for (const modelName of VISION_MODEL_CHAIN) {
+    const model = genAI.getGenerativeModel({ model: modelName });
+    try {
+      const result = await withTimeout(model.generateContent(parts), VISION_TIMEOUT_MS);
+      return result.response.text();
+    } catch (err) {
+      lastError = err;
+      continue; // try next model immediately, no retry-within-model for vision
+    }
+  }
+  throw lastError;
+}
+
+function extractJSON(raw) {
+  if (!raw || typeof raw !== 'string') {
+    throw new Error('Empty response from AI model');
+  }
+  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (initialErr) {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      const candidate = cleaned.substring(firstBrace, lastBrace + 1);
+      return JSON.parse(candidate);
+    }
+    throw initialErr;
+  }
 }
 
 async function generateJSON(prompt) {
   const raw = await generateContent(prompt);
-  const cleaned = raw.replace(/```json|```/g, '').trim();
-  return JSON.parse(cleaned);
+  return extractJSON(raw);
 }
 
-module.exports = { generateContent, generateJSON };
+async function generateVisionJSON(prompt, images) {
+  const raw = await generateVisionContent(prompt, images);
+  return extractJSON(raw);
+}
+
+module.exports = { generateContent, generateJSON, generateVisionContent, generateVisionJSON };

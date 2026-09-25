@@ -1,124 +1,82 @@
-const fs = require('fs');
-const path = require('path');
+const db = require('../db/connection');
 
-const customersPath = path.join(__dirname, '../mockData/customers.json');
-const ordersPath = path.join(__dirname, '../mockData/orders.json');
-const paymentsPath = path.join(__dirname, '../mockData/payments.json');
-const ticketsPath = path.join(__dirname, '../mockData/tickets.json');
-const policiesPath = path.join(__dirname, '../mockData/policies.json');
-const refundsPath = path.join(__dirname, '../mockData/refunds.json');
-const securityEventsPath = path.join(__dirname, '../mockData/securityEvents.json');
-
-function readJsonSafe(filePath, defaultVal = []) {
-  try {
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    }
-  } catch (err) {
-    console.error(`[dataStore] Error reading ${filePath}:`, err.message);
-  }
-  return defaultVal;
+function rowToOrder(row) {
+  return { ...row, returnRequested: !!row.returnRequested };
 }
 
-let customers = readJsonSafe(customersPath, []);
-let orders = readJsonSafe(ordersPath, []);
-let payments = readJsonSafe(paymentsPath, []);
-let tickets = readJsonSafe(ticketsPath, []);
-let policies = readJsonSafe(policiesPath, []);
-let refunds = readJsonSafe(refundsPath, []);
-let securityEvents = readJsonSafe(securityEventsPath, []);
-
-function persistCustomers() {
-  fs.writeFileSync(customersPath, `${JSON.stringify(customers, null, 2)}\n`);
+function rowToSecurityEvent(row) {
+  return { ...row, flagged: !!row.flagged };
 }
 
-function persistOrders() {
-  fs.writeFileSync(ordersPath, `${JSON.stringify(orders, null, 2)}\n`);
+function nextId(table, prefix, idColumn = 'id') {
+  const rows = db.prepare(`SELECT ${idColumn} as id FROM ${table}`).all();
+  const nums = rows
+    .map((r) => parseInt(String(r.id).replace(prefix, ''), 10))
+    .filter((n) => !isNaN(n));
+  const max = nums.length ? Math.max(...nums) : 0;
+  return `${prefix}${String(max + 1).padStart(3, '0')}`;
 }
 
-function persistPayments() {
-  fs.writeFileSync(paymentsPath, `${JSON.stringify(payments, null, 2)}\n`);
-}
+const getAllCustomers = () => db.prepare('SELECT * FROM customers').all();
 
-function persistTickets() {
-  fs.writeFileSync(ticketsPath, `${JSON.stringify(tickets, null, 2)}\n`);
-}
+const getCustomerById = (id) =>
+  db.prepare('SELECT * FROM customers WHERE id = ?').get(id) || null;
 
-function nextCustomerId() {
-  const nums = customers.map((c) => {
-    const match = /^CUST(\d+)$/i.exec(c.id);
-    return match ? Number(match[1]) : 0;
-  });
-  const next = Math.max(0, ...nums) + 1;
-  return `CUST${String(next).padStart(3, '0')}`;
-}
+const getOrdersByCustomerId = (id) =>
+  db.prepare('SELECT * FROM orders WHERE customerId = ?').all(id).map(rowToOrder);
 
-const getAllCustomers = () => customers.slice();
-const getCustomerById = (id) => customers.find((c) => c.id === id) || null;
-const getOrdersByCustomerId = (id) => orders.filter((o) => o.customerId === id);
-const getPaymentsByCustomerId = (id) => payments.filter((p) => p.customerId === id);
-const getTicketsByCustomerId = (id) => tickets.filter((t) => t.customerId === id);
-const getRefundsByCustomerId = (id) => refunds.filter((r) => r.customerId === id);
-const getSecurityEventsByCustomerId = (id) => securityEvents.filter((s) => s.customerId === id);
-const getAllPolicies = () => policies.slice();
-const getPolicyById = (id) => policies.find((p) => p.id === id) || null;
+const getPaymentsByCustomerId = (id) =>
+  db.prepare('SELECT * FROM payments WHERE customerId = ?').all(id);
 
-function addCustomer({ id, name, email, tier, joinedDate, joinedOn, orders: newOrders, payments: newPayments, tickets: newTickets }) {
-  const finalId = id ? String(id).trim().toUpperCase() : nextCustomerId();
+const getTicketsByCustomerId = (id) =>
+  db.prepare('SELECT * FROM tickets WHERE customerId = ?').all(id);
 
-  if (customers.some((c) => c.id.toUpperCase() === finalId)) {
-    throw new Error(`Customer with ID ${finalId} already exists`);
-  }
+const getRefundsByCustomerId = (id) =>
+  db.prepare('SELECT * FROM refunds WHERE customerId = ?').all(id);
 
-  const joinDate = joinedDate || joinedOn || new Date().toISOString().slice(0, 10);
+const getSecurityEventsByCustomerId = (id) =>
+  db.prepare('SELECT * FROM security_events WHERE customerId = ?').all(id).map(rowToSecurityEvent);
+
+const getAllPolicies = () => db.prepare('SELECT * FROM policies').all();
+
+function addCustomer({ name, email, tier, order }) {
   const customer = {
-    id: finalId,
-    name: name.trim(),
-    email: email.trim(),
+    id: nextId('customers', 'CUST'),
+    name,
+    email,
     tier: tier || 'silver',
-    joinedDate: joinDate,
-    joinedOn: joinDate,
+    joinedOn: new Date().toISOString().slice(0, 10),
   };
 
-  if (Array.isArray(newOrders) && newOrders.length > 0) {
-    for (const ord of newOrders) {
-      if (!ord.id) {
-        throw new Error('All new customer orders must have a valid id');
-      }
-      if (orders.some((existing) => existing.id.toUpperCase() === ord.id.toUpperCase())) {
-        throw new Error(`Order with ID ${ord.id} already exists`);
-      }
-      orders.push({
-        ...ord,
-        customerId: finalId,
-      });
-    }
-    persistOrders();
+  db.prepare('INSERT INTO customers (id, name, email, tier, joinedOn) VALUES (@id, @name, @email, @tier, @joinedOn)').run(customer);
+
+  if (order && order.product && order.amount) {
+    const newOrder = {
+      id: nextId('orders', 'ORDER'),
+      customerId: customer.id,
+      product: order.product,
+      amount: Number(order.amount),
+      status: order.status || 'delivered',
+      deliveredOn: order.status === 'in_transit' ? null : new Date().toISOString().slice(0, 10),
+      returnRequested: 0,
+    };
+    db.prepare('INSERT INTO orders (id, customerId, product, amount, status, deliveredOn, returnRequested) VALUES (@id, @customerId, @product, @amount, @status, @deliveredOn, @returnRequested)').run(newOrder);
+
+    const newPayment = {
+      id: nextId('payments', 'PAY'),
+      orderId: newOrder.id,
+      customerId: customer.id,
+      amount: newOrder.amount,
+      gatewayStatus: order.gatewayStatus || 'success',
+      localStatus: order.localStatus || 'success',
+      timestamp: new Date().toISOString(),
+    };
+    db.prepare('INSERT INTO payments (id, orderId, customerId, amount, gatewayStatus, localStatus, timestamp) VALUES (@id, @orderId, @customerId, @amount, @gatewayStatus, @localStatus, @timestamp)').run(newPayment);
+
+    return { customer, order: rowToOrder(newOrder), payment: newPayment };
   }
 
-  if (Array.isArray(newPayments) && newPayments.length > 0) {
-    for (const pay of newPayments) {
-      payments.push({
-        ...pay,
-        customerId: finalId,
-      });
-    }
-    persistPayments();
-  }
-
-  if (Array.isArray(newTickets) && newTickets.length > 0) {
-    for (const tkt of newTickets) {
-      tickets.push({
-        ...tkt,
-        customerId: finalId,
-      });
-    }
-    persistTickets();
-  }
-
-  customers.push(customer);
-  persistCustomers();
-  return customer;
+  return { customer, order: null, payment: null };
 }
 
 module.exports = {
@@ -130,6 +88,5 @@ module.exports = {
   getRefundsByCustomerId,
   getSecurityEventsByCustomerId,
   getAllPolicies,
-  getPolicyById,
   addCustomer,
 };

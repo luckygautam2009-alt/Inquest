@@ -209,3 +209,29 @@ body {
 .fade-up-2 { animation-delay: 0.12s; }
 .fade-up-3 { animation-delay: 0.19s; }
 .fade-up-4 { animation-delay: 0.26s; }
+
+@keyframes scanline {
+  0% { top: 0%; }
+  50% { top: 100%; }
+  100% { top: 0%; }
+}
+.scanline {
+  animation: scanline 2s ease-in-out infinite;
+}
+
+@keyframes popIn {
+  0% { transform: scale(0.5); opacity: 0; }
+  60% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.pop-in {
+  animation: popIn 0.4s ease-out;
+}
+
+@keyframes lockPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.lock-pulse {
+  animation: lockPulse 0.5s ease-in-out infinite;
+}

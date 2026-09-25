@@ -99,7 +99,7 @@ function evaluatePolicyConditions(policy, investigation, analysis) {
           const deliveryTime = new Date(deliveryDateStr).getTime();
           const now = Date.now();
           const daysDiff = (now - deliveryTime) / (1000 * 60 * 60 * 24);
-          if (daysDiff <= (policy.timeWindowDays || 10)) {
+          if (daysDiff <= (policy.eligibleWithinDays || 10)) {
             return {
               satisfied: true,
               evidenceUsed: [

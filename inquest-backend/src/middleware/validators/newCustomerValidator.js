@@ -1,47 +1,42 @@
 const { body } = require('express-validator');
 
 const newCustomerValidationRules = [
-  body('id')
-    .optional()
-    .isString().withMessage('id must be a string')
-    .bail()
-    .trim()
-    .matches(/^[A-Za-z0-9_-]+$/).withMessage('id contains invalid characters'),
   body('name')
     .exists({ checkFalsy: true }).withMessage('name is required')
     .bail()
     .isString().withMessage('name must be a string')
-    .bail()
     .trim()
     .isLength({ min: 2, max: 80 }).withMessage('name must be 2-80 characters'),
+
   body('email')
     .exists({ checkFalsy: true }).withMessage('email is required')
     .bail()
     .isEmail().withMessage('email must be valid')
-    .bail()
     .normalizeEmail(),
+
   body('tier')
     .optional()
-    .isString().withMessage('tier must be a string')
-    .bail()
-    .trim()
-    .toLowerCase()
     .isIn(['silver', 'gold', 'platinum']).withMessage('tier must be silver, gold, or platinum'),
-  body('joinedDate')
+
+  body('order.product')
     .optional()
-    .isISO8601().withMessage('joinedDate must be a valid date'),
-  body('joinedOn')
+    .isString().isLength({ min: 1, max: 100 }).withMessage('order.product must be 1-100 characters'),
+
+  body('order.amount')
     .optional()
-    .isISO8601().withMessage('joinedOn must be a valid date'),
-  body('orders')
+    .isFloat({ min: 1 }).withMessage('order.amount must be a positive number'),
+
+  body('order.status')
     .optional()
-    .isArray().withMessage('orders must be an array'),
-  body('payments')
+    .isIn(['delivered', 'in_transit']).withMessage('order.status must be delivered or in_transit'),
+
+  body('order.gatewayStatus')
     .optional()
-    .isArray().withMessage('payments must be an array'),
-  body('tickets')
+    .isIn(['success', 'failed']).withMessage('order.gatewayStatus must be success or failed'),
+
+  body('order.localStatus')
     .optional()
-    .isArray().withMessage('tickets must be an array'),
+    .isIn(['success', 'failed']).withMessage('order.localStatus must be success or failed'),
 ];
 
 module.exports = { newCustomerValidationRules };

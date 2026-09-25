@@ -27,3 +27,9 @@ pnpm-debug.log*
 */.DS_Store
 .vscode/
 .idea/
+
+# Database & Runtime persistence
+*.db
+*.db-*
+reference_card.json
+*/reference_card.json

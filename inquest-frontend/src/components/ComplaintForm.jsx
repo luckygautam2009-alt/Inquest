@@ -38,6 +38,12 @@ export default function ComplaintForm({ onSubmit, loading }) {
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newTier, setNewTier] = useState('silver');
+  const [showOrder, setShowOrder] = useState(false);
+  const [orderProduct, setOrderProduct] = useState('');
+  const [orderAmount, setOrderAmount] = useState('');
+  const [orderStatus, setOrderStatus] = useState('delivered');
+  const [orderGatewayStatus, setOrderGatewayStatus] = useState('success');
+  const [orderLocalStatus, setOrderLocalStatus] = useState('success');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState(null);
   const [charCount, setCharCount] = useState(0);
@@ -84,15 +90,31 @@ export default function ComplaintForm({ onSubmit, loading }) {
     }
     setSaving(true);
     try {
-      const res = await createCustomer({
+      const payload = {
         name: newName.trim(),
         email: newEmail.trim(),
         tier: newTier,
-      });
-      const created = res.data;
+      };
+      if (showOrder && orderProduct.trim() && orderAmount) {
+        payload.order = {
+          product: orderProduct.trim(),
+          amount: Number(orderAmount),
+          status: orderStatus,
+          gatewayStatus: orderGatewayStatus,
+          localStatus: orderLocalStatus,
+        };
+      }
+      const res = await createCustomer(payload);
+      const created = res.data.customer || res.data;
       setNewName('');
       setNewEmail('');
       setNewTier('silver');
+      setOrderProduct('');
+      setOrderAmount('');
+      setOrderStatus('delivered');
+      setOrderGatewayStatus('success');
+      setOrderLocalStatus('success');
+      setShowOrder(false);
       setShowAdd(false);
       await loadCustomers(created.id);
     } catch (err) {
@@ -224,6 +246,62 @@ export default function ComplaintForm({ onSubmit, loading }) {
               </select>
               <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowOrder((v) => !v)}
+              className="text-xs font-semibold text-amber hover:text-amber-light cursor-pointer"
+            >
+              {showOrder ? '- Hide order details' : '+ Seed an order (optional, for instant investigation)'}
+            </button>
+
+            {showOrder && (
+              <div className="space-y-2.5 border-t border-border pt-3">
+                <input
+                  value={orderProduct}
+                  onChange={(e) => setOrderProduct(e.target.value)}
+                  placeholder="Product name (e.g. Gaming Mouse)"
+                  className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
+                />
+                <input
+                  value={orderAmount}
+                  onChange={(e) => setOrderAmount(e.target.value)}
+                  placeholder="Amount (e.g. 2499)"
+                  type="number"
+                  className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
+                />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <select
+                    value={orderStatus}
+                    onChange={(e) => setOrderStatus(e.target.value)}
+                    className="bg-ink border border-border-strong rounded-lg px-3 py-2.5 text-sm text-paper"
+                  >
+                    <option value="delivered">Delivered</option>
+                    <option value="in_transit">In Transit</option>
+                  </select>
+                  <div />
+                  <select
+                    value={orderGatewayStatus}
+                    onChange={(e) => setOrderGatewayStatus(e.target.value)}
+                    className="bg-ink border border-border-strong rounded-lg px-3 py-2.5 text-sm text-paper"
+                  >
+                    <option value="success">Gateway: Success</option>
+                    <option value="failed">Gateway: Failed</option>
+                  </select>
+                  <select
+                    value={orderLocalStatus}
+                    onChange={(e) => setOrderLocalStatus(e.target.value)}
+                    className="bg-ink border border-border-strong rounded-lg px-3 py-2.5 text-sm text-paper"
+                  >
+                    <option value="success">Local: Success</option>
+                    <option value="failed">Local: Failed</option>
+                  </select>
+                </div>
+                <p className="text-[11px] text-muted">
+                  Tip: set Gateway=Success + Local=Failed to seed a duplicate-payment style case.
+                </p>
+              </div>
+            )}
 
             {formError && (
               <p className="text-xs text-alert bg-alert-dim border border-alert/30 rounded-lg px-3 py-2 font-medium">

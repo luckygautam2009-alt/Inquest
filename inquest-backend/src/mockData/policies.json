@@ -1,194 +1,79 @@
 [
   {
     "id": "POLICY1",
-    "title": "Failed Payment with Amount Deducted",
-    "category": "payment",
-    "condition": "failed_payment_deducted",
-    "conditions": {
-      "gatewayStatus": "success",
-      "localStatus": "failed"
-    },
-    "requiredEvidence": ["payment_record", "gateway_reconciliation"],
-    "timeWindowDays": 5,
-    "timeWindow": "5 days from transaction date",
-    "eligibilityRule": "Bank or gateway captured payment successfully but local order state marked transaction failed; auto-refund eligible within 5 business days.",
-    "action": "INITIATE_AUTO_REFUND",
-    "autoResolveAllowed": true,
-    "requiresEscalation": false,
-    "description": "If bank debited funds but order remained in failed state, the captured funds are automatically reconciled and refunded."
+    "title": "Failed Payment / Amount Deducted",
+    "condition": "gateway_success_local_failed",
+    "eligibleWithinDays": null,
+    "description": "If the payment gateway confirms a successful debit but the order was not created locally, the customer is eligible for a reconciliation refund."
   },
   {
     "id": "POLICY2",
-    "title": "Refund Pending / Delay Inquest",
-    "category": "refund",
+    "title": "Refund Pending",
     "condition": "refund_pending",
-    "conditions": {
-      "refundStatus": "pending"
-    },
-    "requiredEvidence": ["refund_record"],
-    "timeWindowDays": 7,
-    "timeWindow": "5-7 banking business days",
-    "eligibilityRule": "Refund has been initiated in payment gateway and is awaiting banking settlement clearance within standard 7-day turnaround window.",
-    "action": "CONFIRM_REFUND_STATUS_AND_ARN",
-    "autoResolveAllowed": true,
-    "requiresEscalation": false,
-    "description": "Provides verified refund gateway reference and current clearance stage when refund has already been triggered."
+    "eligibleWithinDays": null,
+    "description": "An initiated refund that is still in pending status is being processed and awaiting bank settlement."
   },
   {
     "id": "POLICY3",
-    "title": "Return & Exchange Eligibility",
-    "category": "product_issue",
+    "title": "Return & Exchange",
     "condition": "delivered_no_return_requested",
-    "conditions": {
-      "orderStatus": "delivered",
-      "deliveredWithinDays": 10,
-      "returnRequested": false
-    },
-    "requiredEvidence": ["verified_order", "delivery_timestamp"],
-    "timeWindowDays": 10,
-    "timeWindow": "10 days from confirmed delivery",
-    "eligibilityRule": "Products can be returned within 10 days of delivery if unused, unaltered, and undamaged.",
-    "action": "INITIATE_RETURN_PICKUP",
-    "autoResolveAllowed": false,
-    "requiresEscalation": false,
+    "eligibleWithinDays": 10,
     "description": "Products can be returned within 10 days of delivery if unused and undamaged."
   },
   {
     "id": "POLICY4",
-    "title": "Return Received Refund Eligibility",
-    "category": "refund",
-    "condition": "returned_warehouse_received",
-    "conditions": {
-      "orderStatus": "returned",
-      "returnStatus": "item_received_warehouse"
-    },
-    "requiredEvidence": ["verified_order", "warehouse_receipt_record"],
-    "timeWindowDays": 14,
-    "timeWindow": "14 days from return pickup",
-    "eligibilityRule": "Returned merchandise has been physically scanned at warehouse; customer is fully eligible for refund release.",
-    "action": "TRIGGER_RETURN_REFUND",
-    "autoResolveAllowed": true,
-    "requiresEscalation": false,
-    "description": "When an item return is verified as received at the logistics facility, the purchase amount is eligible for automatic refund."
+    "title": "Return Received — Refund Eligibility",
+    "condition": "return_received_at_warehouse",
+    "eligibleWithinDays": null,
+    "description": "If a returned item has been received at the warehouse, the customer is fully eligible for a refund."
   },
   {
     "id": "POLICY5",
-    "title": "Order Cancellation Status & Reason",
-    "category": "cancellation",
+    "title": "Order Cancellation",
     "condition": "order_cancelled",
-    "conditions": {
-      "orderStatus": "cancelled"
-    },
-    "requiredEvidence": ["verified_order", "cancellation_record"],
-    "timeWindowDays": null,
-    "timeWindow": "Anytime prior to shipment",
-    "eligibilityRule": "Order cancelled prior to fulfillment; cancellation reason reported strictly if present in backend records.",
-    "action": "VERIFY_CANCELLATION_AND_REFUND_STATUS",
-    "autoResolveAllowed": true,
-    "requiresEscalation": false,
-    "description": "Provides verified cancellation timestamp and recorded cancellation reason from order history."
+    "eligibleWithinDays": null,
+    "description": "Customers may request confirmation of cancellation status and reason for any order marked cancelled in the system."
   },
   {
     "id": "POLICY6",
     "title": "Damaged Product Claim",
-    "category": "product_issue",
     "condition": "damaged_product",
-    "conditions": {
-      "orderStatus": "delivered"
-    },
-    "requiredEvidence": ["verified_order", "customer_photo_evidence"],
-    "timeWindowDays": 7,
-    "timeWindow": "7 days from delivery",
-    "eligibilityRule": "Physical damage claims rely solely on customer claim and require physical proof/photographic verification prior to approval.",
-    "action": "ESCALATE_FOR_PHOTO_EVIDENCE",
-    "autoResolveAllowed": false,
-    "requiresEscalation": true,
-    "description": "Physical damage claims must never auto-resolve without objective evidence such as photo proof or return inspection."
+    "eligibleWithinDays": 7,
+    "description": "Physical damage claims require photo verification from the customer before a replacement or refund is issued."
   },
   {
     "id": "POLICY7",
     "title": "Duplicate Payment Refund",
-    "category": "payment",
     "condition": "duplicate_payment",
-    "conditions": {
-      "minSuccessfulPayments": 2,
-      "orderVerified": true
-    },
-    "requiredEvidence": ["verified_order", "multiple_successful_payments"],
-    "timeWindowDays": 7,
-    "timeWindow": "7 days from transaction",
-    "eligibilityRule": "Customers are eligible for a full refund if duplicate successful payments are detected on a single order within 7 days.",
-    "action": "AUTO_REFUND_DUPLICATE_PAYMENT",
-    "autoResolveAllowed": true,
-    "requiresEscalation": false,
+    "eligibleWithinDays": 7,
     "description": "Customers are eligible for a full refund if a duplicate payment is detected within 7 days of transaction."
   },
   {
     "id": "POLICY8",
-    "title": "Wrong Product Received",
-    "category": "product_issue",
-    "condition": "wrong_product_delivered",
-    "conditions": {
-      "orderStatus": "delivered"
-    },
-    "requiredEvidence": ["verified_order", "customer_claim", "warehouse_sku_verification"],
-    "timeWindowDays": 7,
-    "timeWindow": "7 days from delivery",
-    "eligibilityRule": "Wrong item shipped requires logistics verification against warehouse outbound barcode scan and reverse pickup.",
-    "action": "ESCALATE_FOR_LOGISTICS_REVERSE_PICKUP",
-    "autoResolveAllowed": false,
-    "requiresEscalation": true,
-    "description": "Customer claims different item was received than ordered; requires human logistics review."
+    "title": "Wrong Product Delivered",
+    "condition": "wrong_item_received",
+    "eligibleWithinDays": 7,
+    "description": "If a customer receives an item different from what was ordered, warehouse dispatch logs must be compared before a refund or replacement is issued."
   },
   {
     "id": "POLICY9",
     "title": "Account Security Review",
-    "category": "security/unauthorized_activity",
     "condition": "suspicious_activity",
-    "conditions": {
-      "securityEventPresent": true
-    },
-    "requiredEvidence": ["security_audit_logs", "login_history"],
-    "timeWindowDays": null,
-    "timeWindow": "Immediate",
-    "eligibilityRule": "Any suspected unauthorized account access, login breach, or suspicious device session must be immediately escalated to security ops.",
-    "action": "LOCK_SESSIONS_AND_ESCALATE_TO_SECURITY",
-    "autoResolveAllowed": false,
-    "requiresEscalation": true,
+    "eligibleWithinDays": null,
     "description": "Any suspected unauthorized account access must be escalated to the security team for manual review before any account or payment action is taken."
   },
   {
     "id": "POLICY10",
-    "title": "Delivered But Not Received (POD Dispute)",
-    "category": "product_issue",
+    "title": "Delivered Not Received",
     "condition": "delivered_not_received",
-    "conditions": {
-      "orderStatus": "delivered"
-    },
-    "requiredEvidence": ["verified_order", "courier_pod_signature"],
-    "timeWindowDays": 3,
-    "timeWindow": "3 days from marked delivery",
-    "eligibilityRule": "Carrier marked parcel delivered but customer claims non-receipt; requires courier proof-of-delivery (POD) check with delivery partner.",
-    "action": "ESCALATE_TO_CARRIER_INVESTIGATION",
-    "autoResolveAllowed": false,
-    "requiresEscalation": true,
-    "description": "Dispute where tracking shows delivered but customer reports non-receipt requires courier dispatch inquiry."
+    "eligibleWithinDays": null,
+    "description": "If tracking shows delivery but the customer disputes receipt, courier proof-of-delivery must be obtained before resolution."
   },
   {
     "id": "POLICY11",
-    "title": "Order In-Transit Status & Delivery Delay",
-    "category": "order_status/delay",
-    "condition": "order_in_transit",
-    "conditions": {
-      "orderStatus": "in_transit"
-    },
-    "requiredEvidence": ["verified_order", "courier_tracking"],
-    "timeWindowDays": null,
-    "timeWindow": "During shipment transit",
-    "eligibilityRule": "Order currently in transit with logistics carrier; provide live carrier tracking status and expected delivery estimate.",
-    "action": "PROVIDE_TRACKING_AND_ESTIMATED_DELIVERY",
-    "autoResolveAllowed": true,
-    "requiresEscalation": false,
-    "description": "Provides verified live shipping status and expected delivery timeline for active parcels."
+    "title": "Delayed Delivery / In-Transit",
+    "condition": "delivery_delay",
+    "eligibleWithinDays": null,
+    "description": "If an order remains in_transit beyond its expected delivery window, the customer is eligible for a shipping credit or expedited redelivery."
   }
 ]

@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import VerifyModal from './VerifyModal';
 import {
   CheckCircle, AlertTriangle, UserCheck,
   FileText, Search, Zap, MessageSquare,
@@ -195,6 +197,8 @@ export default function ResultPanel({ data }) {
   const decisionCfg = DECISION_CONFIG[decision?.decision] || DECISION_CONFIG.HUMAN_ESCALATION;
   const DecisionIcon = decisionCfg.icon;
   const IntentIcon = intentIcon(analysis?.intent);
+  const [showVerify, setShowVerify] = useState(false);
+  const needsVerification = decision?.decision === 'CUSTOMER_CONFIRM' || decision?.decision === 'HUMAN_ESCALATION';
 
   return (
     <div className="space-y-6">
@@ -257,7 +261,16 @@ export default function ResultPanel({ data }) {
             <span>ℹ️</span> {decision.sentimentNote}
           </p>
         )}
+        {needsVerification && (
+          <button
+            onClick={() => setShowVerify(true)}
+            className="mt-5 w-full sm:w-auto bg-ink text-paper font-bold px-5 py-2.5 rounded-lg text-sm hover:bg-ink-lighter border border-border-strong transition-colors cursor-pointer"
+          >
+            Verify Manually
+          </button>
+        )}
       </div>
+      {showVerify && <VerifyModal onClose={() => setShowVerify(false)} />}
 
       {/* ── Two-column grid: Analysis + Root Cause ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
