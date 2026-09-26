@@ -8,6 +8,7 @@ import { useTheme } from './hooks/useTheme';
 import AdminPanel from './components/AdminPanel';
 import StoryPage from './pages/StoryPage';
 import { Scale, Activity, ChevronRight, Sun, Moon, ShieldCheck, Sparkles } from 'lucide-react';
+import logoMark from './assets/logo-mark.png';
 
 export default function App() {
   const [route, setRoute] = useState(window.location.pathname);
@@ -58,8 +59,8 @@ export default function App() {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-8 h-18 sm:h-20 flex items-center justify-between">
           <div className="flex items-center gap-3.5">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-dim border border-amber/40 flex items-center justify-center shadow-xs">
-              <Scale className="w-5 h-5 text-amber" />
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-dim border border-amber/40 flex items-center justify-center shadow-xs overflow-hidden p-1.5">
+              <img src="/favicon.png" alt="INQUEST Logo" className="w-full h-full object-contain" />
             </div>
             <div className="flex items-center gap-2.5">
               <span className="font-display text-xl sm:text-2xl font-bold tracking-tight text-paper">INQUEST</span>
@@ -254,8 +255,8 @@ export default function App() {
                 <div className="absolute -bottom-16 -left-16 w-64 h-64 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
 
                 {/* Standby badge */}
-                <div className="w-20 h-20 rounded-2xl bg-amber-dim border border-amber/40 flex items-center justify-center mb-5 shadow-sm ring-4 ring-amber-dim/50">
-                  <Scale className="w-9 h-9 text-amber" />
+                <div className="w-20 h-20 rounded-2xl bg-amber-dim border border-amber/40 flex items-center justify-center mb-5 shadow-sm ring-4 ring-amber-dim/50 p-3.5">
+                  <img src="/favicon.png" alt="INQUEST" className="w-12 h-12 object-contain" />
                 </div>
 
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-ink-lighter border border-border-strong text-xs font-semibold text-paper-dim dark:text-muted mb-3.5 shadow-2xs">
@@ -299,7 +300,7 @@ export default function App() {
       <footer className="border-t border-border mt-20 py-8 px-8 bg-ink-light/40">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4 text-xs text-muted">
           <div className="flex items-center gap-2.5">
-            <Scale className="w-4 h-4 text-amber" />
+            <img src="/favicon.png" alt="INQUEST" className="w-4 h-4 object-contain" />
             <span className="font-display font-semibold text-paper">INQUEST</span>
             <span>· RootCause AI · Autonomous Complaint Resolution</span>
           </div>

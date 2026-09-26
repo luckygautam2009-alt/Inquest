@@ -173,8 +173,8 @@ export default function StoryPage({ onNavigateHome }) {
             className="flex items-center gap-3.5 group cursor-pointer text-left"
             title="Return to INQUEST Live App"
           >
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-dim border border-amber/40 flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
-              <Scale className="w-5 h-5 text-amber" />
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-dim border border-amber/40 flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform overflow-hidden p-1.5">
+              <img src="/favicon.png" alt="INQUEST Logo" className="w-full h-full object-contain" />
             </div>
             <div className="flex items-center gap-2.5">
               <span className="font-display text-xl sm:text-2xl font-bold tracking-tight text-paper">
@@ -1175,7 +1175,7 @@ export default function StoryPage({ onNavigateHome }) {
       <footer className="border-t border-border py-8 text-center text-xs text-muted">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2 font-display font-bold text-paper">
-            <Scale className="w-4 h-4 text-amber" />
+            <img src="/favicon.png" alt="INQUEST" className="w-4 h-4 object-contain" />
             <span>INQUEST RootCause AI</span>
           </div>
           <p>© 2026 INQUEST. All complaints investigated with verifiable database truth.</p>

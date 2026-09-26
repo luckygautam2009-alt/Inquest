@@ -164,8 +164,8 @@ export default function AdminPanel({ onClose }) {
         <header className="h-14 px-4 sm:px-5 border-b border-border bg-ink-light flex items-center justify-between gap-4 shrink-0 shadow-xs z-20 transition-colors">
           {/* Left Brand Area */}
           <div className="flex items-center gap-3 shrink-0">
-            <div className="w-8 h-8 rounded-lg bg-amber-dim text-amber flex items-center justify-center shrink-0 border border-amber/25 shadow-2xs">
-              <ShieldCheck className="w-4.5 h-4.5" />
+            <div className="w-8 h-8 rounded-lg bg-amber-dim text-amber flex items-center justify-center shrink-0 border border-amber/25 shadow-2xs overflow-hidden p-1">
+              <img src="/favicon.png" alt="INQUEST Admin" className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="flex items-center gap-2">
