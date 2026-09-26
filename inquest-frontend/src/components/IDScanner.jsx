@@ -152,15 +152,11 @@ export default function IDScanner({ name, email, adminPassword, onVerified, onCa
 
     const vw = video.videoWidth || 640;
     const vh = video.videoHeight || 480;
-    const cropW = vw * 0.85;
-    const cropH = vh * 0.75;
-    const cropX = (vw - cropW) / 2;
-    const cropY = (vh - cropH) / 2;
 
-    canvas.width = cropW;
-    canvas.height = cropH;
+    canvas.width = vw;
+    canvas.height = vh;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+    ctx.drawImage(video, 0, 0, vw, vh);
     return canvas;
   }
 
@@ -294,7 +290,7 @@ export default function IDScanner({ name, email, adminPassword, onVerified, onCa
           <img
             src={capturedPreview}
             alt="Captured ID"
-            className="absolute inset-0 w-full h-full object-cover z-10"
+            className="absolute inset-0 w-full h-full object-contain bg-ink-inset z-10"
           />
         )}
 
@@ -304,7 +300,7 @@ export default function IDScanner({ name, email, adminPassword, onVerified, onCa
           autoPlay
           playsInline
           muted
-          className={`w-full h-full object-cover ${showVideo ? 'opacity-100' : 'opacity-0'}`}
+          className={`w-full h-full object-contain ${showVideo ? 'opacity-100' : 'opacity-0'}`}
         />
 
         {/* Scanning Guide Overlay */}

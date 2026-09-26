@@ -15,7 +15,7 @@ async function request(path, options = {}) {
   return data;
 }
 
-async function requestMultipart(path, formData, timeoutMs = 15000) {
+async function requestMultipart(path, formData, timeoutMs = 25000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

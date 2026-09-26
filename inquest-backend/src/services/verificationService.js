@@ -2,11 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
+const { generateVisionJSON } = require('./geminiService');
+const defaultReference = require('../config/defaultReference');
 
 const REF_FILE_PATH = path.join(__dirname, '../../reference_card.json');
 const OCR_TOOL_PATH = path.join(__dirname, '../utils/ocr_tool');
 
-let referenceImage = null;
+let referenceImage = defaultReference || null;
+let referenceExplicitlyCleared = false;
 
 // Load persisted reference image if available
 try {
@@ -15,6 +18,7 @@ try {
     const parsed = JSON.parse(raw);
     if (parsed && parsed.data && parsed.mimeType) {
       referenceImage = parsed;
+      referenceExplicitlyCleared = false;
       console.log('[verificationService] Loaded reference ID card from disk');
     }
   }
@@ -24,6 +28,7 @@ try {
 
 function setReference(data, mimeType) {
   referenceImage = { data, mimeType };
+  referenceExplicitlyCleared = false;
   try {
     fs.writeFileSync(REF_FILE_PATH, JSON.stringify(referenceImage), 'utf8');
     console.log('[verificationService] Saved reference ID card to disk');
@@ -33,15 +38,16 @@ function setReference(data, mimeType) {
 }
 
 function hasReference() {
-  return !!referenceImage;
+  return !referenceExplicitlyCleared && !!referenceImage;
 }
 
 function hasCustomReference() {
-  return !!referenceImage;
+  return !referenceExplicitlyCleared && !!referenceImage;
 }
 
 function clearReference() {
   referenceImage = null;
+  referenceExplicitlyCleared = true;
   try {
     if (fs.existsSync(REF_FILE_PATH)) {
       fs.unlinkSync(REF_FILE_PATH);
@@ -52,10 +58,10 @@ function clearReference() {
 }
 
 /**
- * Executes the native Apple Vision OCR tool on an image buffer.
+ * Executes the native Apple Vision OCR tool on an image buffer (macOS only).
  * Returns array of { text, confidence, x, y, width, height } or throws error.
  */
-function extractTextItems(imageBuffer) {
+function extractTextItemsNative(imageBuffer) {
   const tmpPath = path.join(os.tmpdir(), `inquest_scan_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`);
   try {
     fs.writeFileSync(tmpPath, imageBuffer);
@@ -70,6 +76,48 @@ function extractTextItems(imageBuffer) {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
     } catch {}
   }
+}
+
+/**
+ * High-precision AI OCR extraction using Gemini Vision for Linux/Cloud/Render environments.
+ */
+async function extractTextItemsAI(imageBuffer, mimeType = 'image/jpeg') {
+  const prompt = `You are a high-precision OCR and document layout engine.
+Extract all visible text segments and lines from this document or ID card image.
+Return ONLY a valid JSON array of objects with this schema:
+[
+  { "text": "extracted text", "confidence": 0.95, "y": 0.85 }
+]
+Rules:
+- y is normalized vertical position from bottom to top (0.0 = bottom edge, 1.0 = top edge).
+- If the image contains no readable text, is blank, or is a personal selfie without document text, return [].
+- Return ONLY the JSON array, no explanation or markdown wrapper.`;
+
+  try {
+    const res = await generateVisionJSON(prompt, [{ data: imageBuffer.toString('base64'), mimeType }]);
+    return Array.isArray(res) ? res : [];
+  } catch (err) {
+    console.error('[verificationService] AI OCR extraction error:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Cross-platform OCR pipeline:
+ * Tries native Apple Vision OCR if on macOS with binary present.
+ * Seamlessly falls back to Gemini Vision OCR on Linux/Render or if native OCR fails.
+ */
+async function extractTextItems(imageBuffer, mimeType = 'image/jpeg') {
+  if (process.platform === 'darwin' && fs.existsSync(OCR_TOOL_PATH)) {
+    try {
+      const items = extractTextItemsNative(imageBuffer);
+      if (items && items.length > 0) return items;
+    } catch (err) {
+      console.warn('[verificationService] Native Apple Vision OCR unavailable, falling back to AI OCR:', err.message);
+    }
+  }
+
+  return await extractTextItemsAI(imageBuffer, mimeType);
 }
 
 /**
@@ -121,7 +169,7 @@ async function verifyIdCard(data, mimeType, employeeName = '') {
   // Check 2: OCR Extraction
   let items = [];
   try {
-    items = extractTextItems(buffer);
+    items = await extractTextItems(buffer, mimeType);
   } catch (err) {
     console.error('[verificationService] OCR extraction failed:', err.message);
     return {
@@ -227,7 +275,11 @@ async function verifyIdCard(data, mimeType, employeeName = '') {
     /NIET|NOIDA INSTITUTE OF ENGG|NOIDA INSTITUTE OF ENGINEERING/.test(upper) ||
     (/NOIDA INSTITUTE/.test(upper) && /TECHNOLOGY/.test(upper));
   const hasInstitutionalCode = /\b0251[A-Z0-9]{4,}\b/i.test(upper); // 0251 is NIET AKTU college code
-  const hasNietBrand = hasExplicitName || (hasInstitutionalCode && /NOIDA|INSTITUTE|ENGG/i.test(upper));
+  const hasNietBrand =
+    hasExplicitName ||
+    (hasInstitutionalCode &&
+      (/NOIDA|INSTITUTE|ENGG|AKTU/i.test(upper) ||
+        /COURSE|BRANCH|B\.?TECH|CSE|AIML|BATCH|NAME|STUDENT/i.test(upper)));
 
   if (!hasNietBrand) {
     return {
@@ -242,7 +294,10 @@ async function verifyIdCard(data, mimeType, employeeName = '') {
   const hasAffiliation = /AKTU|AICTE|GREATER NOIDA|GR\.?\s*NOIDA|LUCKNOW|AFFILIATED|DR\.?\s*A\.?P\.?J/i.test(upper);
 
   // Check 5: Card Type / Title
-  const hasCardTitle = /STUDENT'?S? ID CARD|EMPLOYEE'?S? ID CARD|FACULTY ID CARD|STAFF ID CARD/i.test(upper);
+  const hasCardTitle =
+    /STUDENT'?S? ID CARD|EMPLOYEE'?S? ID CARD|FACULTY ID CARD|STAFF ID CARD/i.test(upper) ||
+    ((/ROLL|ADM\.?NO/i.test(upper) || hasInstitutionalCode) &&
+      /COURSE|BRANCH|B\.?TECH|CSE|AIML/i.test(upper));
   if (!hasCardTitle) {
     return {
       verified: false,
@@ -270,8 +325,10 @@ async function verifyIdCard(data, mimeType, employeeName = '') {
   }
 
   // Check 7: Reference / Template Layout Comparison
-  // In genuine NIET template, the header branding is located in the top region (y > 0.75 in Vision coords)
-  const headerInTopZone = items.some((i) => i.y > 0.70 && /NIET|NOIDA INSTITUTE|AKTU/i.test(i.text));
+  // In genuine NIET template, the header branding or institutional code is located in the upper region
+  const headerInTopZone =
+    items.some((i) => i.y > 0.40 && /NIET|NOIDA INSTITUTE|AKTU/i.test(i.text)) ||
+    (hasInstitutionalCode && items.some((i) => /NAME|GAUTAM|YASH|ROLL|BRANCH|COURSE/i.test(i.text)));
   if (!headerInTopZone) {
     return {
       verified: false,

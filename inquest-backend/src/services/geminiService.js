@@ -10,11 +10,11 @@ const genAIBackup = config.geminiApiKeyBackup
   ? new GoogleGenerativeAI(config.geminiApiKeyBackup)
   : null;
 
-const MODEL_CHAIN = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
-const VISION_MODEL_CHAIN = ['gemini-flash-latest', 'gemini-3.6-flash'];
+const MODEL_CHAIN = ['gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-3.6-flash'];
+const VISION_MODEL_CHAIN = ['gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-3.6-flash'];
 
-const CALL_TIMEOUT_MS = 8000;
-const VISION_TIMEOUT_MS = 9000;
+const CALL_TIMEOUT_MS = 12000;
+const VISION_TIMEOUT_MS = 15000;
 
 function isQuotaExhausted(err) {
   return /429|quota|resource_exhausted/i.test(err?.message || '');
