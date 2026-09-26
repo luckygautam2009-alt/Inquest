@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { submitComplaint } from './api/client';
 import ComplaintForm from './components/ComplaintForm';
 import ResultPanel from './components/ResultPanel';
@@ -6,14 +6,33 @@ import EvidenceGraph from './components/EvidenceGraph';
 import LoadingSkeleton from './components/LoadingSkeleton';
 import { useTheme } from './hooks/useTheme';
 import AdminPanel from './components/AdminPanel';
-import { Scale, Activity, ChevronRight, Sun, Moon, ShieldCheck } from 'lucide-react';
+import StoryPage from './pages/StoryPage';
+import { Scale, Activity, ChevronRight, Sun, Moon, ShieldCheck, Sparkles } from 'lucide-react';
 
 export default function App() {
+  const [route, setRoute] = useState(window.location.pathname);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const { theme, toggleTheme } = useTheme();
   const [showAdmin, setShowAdmin] = useState(false);
+
+  useEffect(() => {
+    const handlePopState = () => setRoute(window.location.pathname);
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  if (route === '/story') {
+    return (
+      <StoryPage
+        onNavigateHome={() => {
+          window.history.pushState({}, '', '/');
+          setRoute('/');
+        }}
+      />
+    );
+  }
 
   async function handleSubmit(customerId, complaintText) {
     setLoading(true);
@@ -56,6 +75,21 @@ export default function App() {
                 <span className="text-verified font-bold">Investigation Complete</span>
               </div>
             )}
+
+            {/* See how it works button */}
+            <button
+              type="button"
+              onClick={() => {
+                window.history.pushState({}, '', '/story');
+                setRoute('/story');
+              }}
+              className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-dim hover:bg-amber-dim/80 border border-amber/40 text-amber text-xs sm:text-sm font-semibold transition-all duration-150 cursor-pointer shadow-xs active:scale-[0.98]"
+              title="See how INQUEST investigates complaints"
+            >
+              <Sparkles className="w-4 h-4 text-amber shrink-0" />
+              <span className="hidden sm:inline">See how it works</span>
+              <span className="sm:hidden">Story</span>
+            </button>
 
             {/* Admin Panel Button */}
             <button
