@@ -1,6 +1,12 @@
 const { body } = require('express-validator');
 
 const newCustomerValidationRules = [
+  body('id')
+    .optional()
+    .isString().withMessage('id must be a string')
+    .trim()
+    .matches(/^[A-Za-z0-9_-]+$/).withMessage('id contains invalid characters'),
+
   body('name')
     .exists({ checkFalsy: true }).withMessage('name is required')
     .bail()
@@ -18,17 +24,25 @@ const newCustomerValidationRules = [
     .optional()
     .isIn(['silver', 'gold', 'platinum']).withMessage('tier must be silver, gold, or platinum'),
 
+  body('order')
+    .optional()
+    .isObject().withMessage('order must be an object'),
+
+  body('orders')
+    .optional()
+    .isArray().withMessage('orders must be an array'),
+
   body('order.product')
     .optional()
     .isString().isLength({ min: 1, max: 100 }).withMessage('order.product must be 1-100 characters'),
 
   body('order.amount')
     .optional()
-    .isFloat({ min: 1 }).withMessage('order.amount must be a positive number'),
+    .isFloat({ min: 0 }).withMessage('order.amount must be a valid number'),
 
   body('order.status')
     .optional()
-    .isIn(['delivered', 'in_transit']).withMessage('order.status must be delivered or in_transit'),
+    .isIn(['delivered', 'in_transit', 'cancelled', 'returned']).withMessage('order.status is invalid'),
 
   body('order.gatewayStatus')
     .optional()

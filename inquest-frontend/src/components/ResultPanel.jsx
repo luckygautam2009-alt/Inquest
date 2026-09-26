@@ -270,7 +270,7 @@ export default function ResultPanel({ data }) {
           </button>
         )}
       </div>
-      {showVerify && <VerifyModal onClose={() => setShowVerify(false)} />}
+      {showVerify && <VerifyModal data={data} onClose={() => setShowVerify(false)} />}
 
       {/* ── Two-column grid: Analysis + Root Cause ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

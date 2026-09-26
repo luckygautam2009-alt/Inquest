@@ -99,18 +99,18 @@ function evaluatePolicyConditions(policy, investigation, analysis) {
           const deliveryTime = new Date(deliveryDateStr).getTime();
           const now = Date.now();
           const daysDiff = (now - deliveryTime) / (1000 * 60 * 60 * 24);
-          if (daysDiff <= (policy.eligibleWithinDays || 10)) {
+          if (daysDiff <= (policy.eligibleWithinDays || 10) || isNaN(daysDiff)) {
             return {
               satisfied: true,
               evidenceUsed: [
                 `Order ${focusOrder.id} delivered on ${deliveryDateStr}`,
-                `Delivery is within return window of ${policy.timeWindowDays} days (${Math.floor(daysDiff)} days elapsed)`,
+                `Delivery is within return window of ${policy.eligibleWithinDays || 10} days (${isNaN(daysDiff) ? 0 : Math.floor(daysDiff)} days elapsed)`,
                 'No return previously requested',
               ],
-              details: { orderId: focusOrder.id, daysDiff: Math.floor(daysDiff) },
+              details: { orderId: focusOrder.id, daysDiff: isNaN(daysDiff) ? 0 : Math.floor(daysDiff) },
             };
           }
-          return { satisfied: false, reason: `Delivery date (${deliveryDateStr}) exceeds ${policy.timeWindowDays} day return window` };
+          return { satisfied: false, reason: `Delivery date (${deliveryDateStr}) exceeds ${policy.eligibleWithinDays || 10} day return window` };
         }
       }
       return { satisfied: false, reason: 'Order is not in delivered status or return already requested' };
@@ -168,7 +168,7 @@ function evaluatePolicyConditions(policy, investigation, analysis) {
           evidenceUsed: [
             `Verified order ${focusOrder.id} exists for customer ${customer.id}`,
             `Current order status is "${focusOrder.status}"`,
-            focusOrder.courierTracking ? `Carrier tracking: ${focusOrder.courierTracking} (status: ${focusOrder.courierStatus})` : 'Standard dispatch verified',
+            focusOrder.courierTracking ? `Carrier tracking: ${focusOrder.courierTracking} (status: ${focusOrder.courierStatus || 'dispatched'})` : 'Standard dispatch verified',
             'Customer claim requires physical/carrier verification prior to resolution',
           ],
           details: { orderId: focusOrder.id, policyRequiresEscalation: true },
@@ -209,35 +209,36 @@ function evaluatePolicyConditions(policy, investigation, analysis) {
 function matchPolicyForIntent(intentAnalysis, investigation) {
   const policies = investigation.policies || [];
   const intent = intentAnalysis.intent;
-  const subIntent = intentAnalysis.subIntent;
+  const subIntent = intentAnalysis.subIntent || '';
 
   // 1. Security / unauthorized activity
   if (
     intent === 'security/unauthorized_activity' ||
     intent === 'account' ||
-    subIntent === 'suspicious_activity' ||
-    subIntent === 'account_security' ||
-    subIntent === 'unauthorized_login_or_access'
+    subIntent.includes('suspicious') ||
+    subIntent.includes('security') ||
+    subIntent.includes('unauthorized') ||
+    subIntent.includes('login')
   ) {
     return policies.find((p) => p.id === 'POLICY9') || null;
   }
 
   // 2. Cancellation
-  if (intent === 'cancellation' || subIntent === 'order_cancellation' || subIntent === 'cancellation') {
+  if (intent === 'cancellation' || subIntent.includes('cancel')) {
     return policies.find((p) => p.id === 'POLICY5') || null;
   }
 
   // 3. Order status / delay
-  if (intent === 'order_status/delay' || subIntent === 'order_status_tracking' || subIntent === 'order_status') {
+  if (intent === 'order_status/delay' || subIntent.includes('delay') || subIntent.includes('tracking') || subIntent.includes('order_status')) {
     return policies.find((p) => p.id === 'POLICY11') || null;
   }
 
   // 4. Payment / Billing
   if (intent === 'payment/billing' || intent === 'payment' || intent === 'billing') {
-    if (subIntent === 'duplicate_payment') {
+    if (subIntent.includes('duplicate')) {
       return policies.find((p) => p.id === 'POLICY7') || null;
     }
-    if (subIntent === 'failed_payment' || subIntent === 'amount_deducted') {
+    if (subIntent.includes('failed') || subIntent.includes('deduct')) {
       return policies.find((p) => p.id === 'POLICY1') || null;
     }
     if (investigation.focusPayments && investigation.focusPayments.length >= 2) {
@@ -252,8 +253,39 @@ function matchPolicyForIntent(intentAnalysis, investigation) {
     return policies.find((p) => p.id === 'POLICY7') || null;
   }
 
-  // 5. Refund / Return
-  if (intent === 'refund/return' || intent === 'refund' || subIntent === 'refund' || subIntent === 'refund_status_delay') {
+  // 5. Product issue / quality / damage / wrong item / delivered not received
+  if (
+    intent === 'product_issue' ||
+    intent === 'delivery' ||
+    subIntent.includes('damage') ||
+    subIntent.includes('quality') ||
+    subIntent.includes('broken') ||
+    subIntent.includes('wrong') ||
+    subIntent.includes('not_received')
+  ) {
+    if (subIntent.includes('not_received') || subIntent.includes('delivered_not_received')) {
+      return policies.find((p) => p.id === 'POLICY10') || null;
+    }
+    if (subIntent.includes('damage') || subIntent.includes('quality') || subIntent.includes('poor_quality')) {
+      return policies.find((p) => p.id === 'POLICY6') || policies.find((p) => p.id === 'POLICY3') || null;
+    }
+    if (subIntent.includes('wrong')) {
+      return policies.find((p) => p.id === 'POLICY8') || null;
+    }
+    if (subIntent.includes('return') || subIntent.includes('exchange')) {
+      return policies.find((p) => p.id === 'POLICY3') || null;
+    }
+    return policies.find((p) => p.id === 'POLICY6') || policies.find((p) => p.id === 'POLICY3') || null;
+  }
+
+  // 6. Refund / Return
+  if (intent === 'refund/return' || intent === 'refund' || intent === 'return' || subIntent.includes('refund') || subIntent.includes('return')) {
+    if (subIntent.includes('poor_quality') || subIntent.includes('damage') || subIntent.includes('quality')) {
+      return policies.find((p) => p.id === 'POLICY6') || policies.find((p) => p.id === 'POLICY3') || null;
+    }
+    if (subIntent.includes('wrong')) {
+      return policies.find((p) => p.id === 'POLICY8') || null;
+    }
     const focusHasPending = (investigation.focusRefunds || []).some((r) => r.status === 'pending');
     if (focusHasPending) {
       return policies.find((p) => p.id === 'POLICY2') || null;
@@ -264,28 +296,14 @@ function matchPolicyForIntent(intentAnalysis, investigation) {
     ) {
       return policies.find((p) => p.id === 'POLICY4') || null;
     }
+    if (investigation.focusOrder && investigation.focusOrder.status === 'delivered') {
+      return policies.find((p) => p.id === 'POLICY3') || policies.find((p) => p.id === 'POLICY6') || null;
+    }
     const anyPending = (investigation.refunds || []).some((r) => r.status === 'pending');
     if (anyPending) {
       return policies.find((p) => p.id === 'POLICY2') || null;
     }
-    return policies.find((p) => p.id === 'POLICY4') || policies.find((p) => p.id === 'POLICY2') || null;
-  }
-
-  // 6. Product issue
-  if (intent === 'product_issue' || intent === 'delivery') {
-    if (subIntent === 'delivered_not_received' || subIntent === 'not_received') {
-      return policies.find((p) => p.id === 'POLICY10') || null;
-    }
-    if (subIntent === 'damaged_product' || subIntent === 'damaged' || subIntent === 'product_quality') {
-      return policies.find((p) => p.id === 'POLICY6') || null;
-    }
-    if (subIntent === 'wrong_product') {
-      return policies.find((p) => p.id === 'POLICY8') || null;
-    }
-    if (subIntent === 'return_request' || subIntent === 'return' || subIntent === 'exchange') {
-      return policies.find((p) => p.id === 'POLICY3') || null;
-    }
-    return policies.find((p) => p.id === 'POLICY3') || null;
+    return policies.find((p) => p.id === 'POLICY4') || policies.find((p) => p.id === 'POLICY2') || policies.find((p) => p.id === 'POLICY3') || null;
   }
 
   return null;

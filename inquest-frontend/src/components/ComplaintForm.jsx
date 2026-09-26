@@ -130,15 +130,15 @@ export default function ComplaintForm({ onSubmit, loading }) {
   return (
     <div className="relative">
       {/* Header label */}
-      <div className="flex items-center gap-2.5 mb-6">
-        <div className="w-1.5 h-6 bg-amber rounded-full" />
-        <h2 className="font-display text-2xl text-paper tracking-tight">Intake Case</h2>
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-2 h-7 bg-amber rounded-full shadow-xs" />
+        <h2 className="font-display text-2xl sm:text-3xl font-bold text-paper tracking-tight">Intake Case</h2>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Customer selector */}
         <div>
-          <label className="block text-xs font-bold text-muted uppercase tracking-wider mb-2.5">
+          <label className="block text-xs font-bold text-paper-dim dark:text-muted uppercase tracking-wider mb-2.5">
             Select Customer
           </label>
           <div className="relative">
@@ -157,22 +157,22 @@ export default function ComplaintForm({ onSubmit, loading }) {
                 </option>
               ))}
             </select>
-            <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
+            <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-paper-dim dark:text-muted pointer-events-none" />
           </div>
 
           {/* Selected customer badge */}
           {selectedCustomer && (
-            <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2 text-xs">
+            <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2 text-xs bg-ink-lighter/70 border border-border-strong rounded-xl p-2.5 shadow-2xs">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-full bg-ink-lighter border border-border-strong flex items-center justify-center">
-                  <User className="w-3.5 h-3.5 text-muted" />
+                <div className="w-6 h-6 rounded-full bg-ink border border-border-strong flex items-center justify-center">
+                  <User className="w-3.5 h-3.5 text-paper-dim dark:text-muted" />
                 </div>
-                <span className="font-semibold text-paper">{selectedCustomer.name}</span>
+                <span className="font-bold text-paper">{selectedCustomer.name}</span>
                 {selectedCustomer.email && (
-                  <span className="text-muted hidden sm:inline">({selectedCustomer.email})</span>
+                  <span className="text-paper-dim dark:text-muted hidden sm:inline">({selectedCustomer.email})</span>
                 )}
               </div>
-              <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${TIER_COLORS[selectedCustomer.tier] || 'text-muted'}`}>
+              <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border shadow-2xs ${TIER_COLORS[selectedCustomer.tier] || 'text-muted'}`}>
                 {selectedCustomer.tier?.toUpperCase() || 'STANDARD'}
               </span>
             </div>
@@ -182,7 +182,7 @@ export default function ComplaintForm({ onSubmit, loading }) {
           <button
             type="button"
             onClick={() => { setShowAdd((v) => !v); setFormError(null); }}
-            className="mt-3.5 flex items-center gap-1.5 text-xs font-semibold text-amber hover:text-amber-light transition-colors cursor-pointer"
+            className="mt-3.5 flex items-center gap-1.5 text-xs font-bold text-amber hover:text-amber-light transition-colors cursor-pointer"
           >
             {showAdd ? (
               <><X className="w-4 h-4" /> Cancel adding customer</>
@@ -201,21 +201,21 @@ export default function ComplaintForm({ onSubmit, loading }) {
             </div>
 
             <div className="relative">
-              <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-paper-dim dark:text-muted" />
               <input
                 id="new-customer-name"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="Full name (e.g. Ramesh Patel)"
                 className="w-full bg-ink border border-border-strong rounded-lg pl-10 pr-3.5 py-2.5
-                           text-sm text-paper placeholder:text-muted/60
+                           text-sm text-paper placeholder:text-paper-dim/60 dark:placeholder:text-muted/60
                            focus:outline-none focus:ring-2 focus:ring-amber/50 focus:border-amber
                            transition-colors"
               />
             </div>
 
             <div className="relative">
-              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-paper-dim dark:text-muted" />
               <input
                 id="new-customer-email"
                 value={newEmail}
@@ -223,14 +223,14 @@ export default function ComplaintForm({ onSubmit, loading }) {
                 placeholder="Email address"
                 type="email"
                 className="w-full bg-ink border border-border-strong rounded-lg pl-10 pr-3.5 py-2.5
-                           text-sm text-paper placeholder:text-muted/60
+                           text-sm text-paper placeholder:text-paper-dim/60 dark:placeholder:text-muted/60
                            focus:outline-none focus:ring-2 focus:ring-amber/50 focus:border-amber
                            transition-colors"
               />
             </div>
 
             <div className="relative">
-              <Shield className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <Shield className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-paper-dim dark:text-muted" />
               <select
                 id="new-customer-tier"
                 value={newTier}
@@ -244,7 +244,7 @@ export default function ComplaintForm({ onSubmit, loading }) {
                 <option value="gold">Gold Tier</option>
                 <option value="platinum">Platinum Tier</option>
               </select>
-              <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
+              <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-paper-dim dark:text-muted pointer-events-none" />
             </div>
 
             <button
@@ -261,14 +261,14 @@ export default function ComplaintForm({ onSubmit, loading }) {
                   value={orderProduct}
                   onChange={(e) => setOrderProduct(e.target.value)}
                   placeholder="Product name (e.g. Gaming Mouse)"
-                  className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
+                  className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-paper-dim/60 dark:placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
                 />
                 <input
                   value={orderAmount}
                   onChange={(e) => setOrderAmount(e.target.value)}
                   placeholder="Amount (e.g. 2499)"
                   type="number"
-                  className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
+                  className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-paper-dim/60 dark:placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
                 />
                 <div className="grid grid-cols-2 gap-2.5">
                   <select
@@ -297,7 +297,7 @@ export default function ComplaintForm({ onSubmit, loading }) {
                     <option value="failed">Local: Failed</option>
                   </select>
                 </div>
-                <p className="text-[11px] text-muted">
+                <p className="text-[11px] text-paper-dim dark:text-muted">
                   Tip: set Gateway=Success + Local=Failed to seed a duplicate-payment style case.
                 </p>
               </div>
@@ -331,10 +331,10 @@ export default function ComplaintForm({ onSubmit, loading }) {
         {/* Complaint textarea */}
         <div>
           <div className="flex items-center justify-between mb-2.5">
-            <label className="text-xs font-bold text-muted uppercase tracking-wider">
+            <label className="text-xs font-bold text-paper-dim dark:text-muted uppercase tracking-wider">
               Customer Complaint
             </label>
-            <span className="text-[11px] text-muted">Hindi / Hinglish supported</span>
+            <span className="text-[11px] font-semibold text-paper-dim dark:text-muted">Hindi / Hinglish supported</span>
           </div>
 
           <div className="relative">
@@ -345,22 +345,22 @@ export default function ComplaintForm({ onSubmit, loading }) {
               rows={4}
               placeholder="Describe the complaint in detail… e.g. 'Payment got deducted twice for order #ORD-1021' or 'Mera order abhi tak deliver nahi hua'"
               className="w-full bg-ink-lighter border border-border-strong rounded-xl
-                         px-4 py-3.5 text-base text-paper placeholder:text-muted/60
+                         px-4 py-3.5 text-base text-paper placeholder:text-paper-dim/60 dark:placeholder:text-muted/60
                          resize-none leading-relaxed
                          focus:outline-none focus:ring-2 focus:ring-amber/50 focus:border-amber
                          transition-colors shadow-xs"
             />
             <span className={`absolute bottom-3 right-3 text-xs tabular-nums font-mono
-              ${charCount > 0 ? 'text-muted' : 'text-muted/40'}`}>
+              ${charCount > 0 ? 'text-paper-dim dark:text-muted font-semibold' : 'text-paper-dim/40 dark:text-muted/40'}`}>
               {charCount} chars
             </span>
           </div>
 
           {/* Quick example prompts */}
-          <div className="mt-3">
-            <div className="flex items-center gap-1.5 text-xs text-muted mb-2">
+          <div className="mt-3.5">
+            <div className="flex items-center gap-1.5 text-xs text-paper-dim dark:text-muted mb-2 font-semibold">
               <Sparkles className="w-3.5 h-3.5 text-amber" />
-              <span className="font-semibold">Quick test cases:</span>
+              <span>Quick test cases:</span>
             </div>
             <div className="flex flex-wrap gap-2">
               {SAMPLE_COMPLAINTS.map((item, idx) => (
@@ -371,7 +371,7 @@ export default function ComplaintForm({ onSubmit, loading }) {
                     setComplaintText(item.text);
                     setCharCount(item.text.length);
                   }}
-                  className="text-xs bg-ink-lighter hover:bg-ink-light border border-border hover:border-amber/40 text-paper px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                  className="text-xs font-medium bg-ink-lighter hover:bg-ink hover:border-amber/50 border border-border-strong text-paper px-3 py-1.5 rounded-lg transition-all duration-150 shadow-2xs cursor-pointer active:scale-95"
                 >
                   {item.label}
                 </button>

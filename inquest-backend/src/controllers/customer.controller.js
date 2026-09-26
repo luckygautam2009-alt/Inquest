@@ -5,8 +5,7 @@ function listCustomers(req, res) {
 }
 
 function createCustomer(req, res) {
-  const { name, email, tier, order } = req.body;
-  const result = dataStore.addCustomer({ name, email, tier, order });
+  const result = dataStore.addCustomer(req.body);
   res.status(201).json({ success: true, data: result });
 }
 

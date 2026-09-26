@@ -16,5 +16,6 @@ module.exports = {
   nodeEnv: process.env.NODE_ENV || 'development',
   corsOrigins,
   geminiApiKey: process.env.GEMINI_API_KEY || '',
+  geminiApiKeyBackup: process.env.GEMINI_API_KEY_BACKUP || '',
   adminPassword: process.env.ADMIN_PASSWORD || '',
 };

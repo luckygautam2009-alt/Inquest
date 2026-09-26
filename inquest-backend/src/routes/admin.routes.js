@@ -1,8 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdminPassword } = require('../middleware/adminAuth');
-const { getOverview } = require('../controllers/admin.controller');
+const {
+  getOverview,
+  getOrCreateProfile,
+  updateProfilePhoto,
+  updateProfileName,
+} = require('../controllers/admin.controller');
 
 router.post('/overview', requireAdminPassword, getOverview);
+router.post('/profile', requireAdminPassword, getOrCreateProfile);
+router.post('/profile/photo', requireAdminPassword, updateProfilePhoto);
+router.post('/profile/name', requireAdminPassword, updateProfileName);
 
 module.exports = router;

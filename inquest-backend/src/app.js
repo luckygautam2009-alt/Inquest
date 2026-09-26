@@ -14,9 +14,21 @@ const adminRoutes = require('./routes/admin.routes');
 
 const app = express();
 
-app.use(helmet());
-app.use(cors({ origin: config.corsOrigins }));
-app.use(express.json({ limit: '10kb' }));
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+}));
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, tests) or local dev origins
+    if (!origin || config.corsOrigins.includes(origin) || origin.startsWith('http://localhost:')) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan(config.nodeEnv === 'development' ? 'dev' : 'combined'));
 app.use('/api', apiLimiter);
 
@@ -29,6 +41,8 @@ app.use('/api/admin', adminRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`🚀 INQUEST backend running on port ${config.port} [${config.nodeEnv}]`);
 });
+
+module.exports = { app, server };

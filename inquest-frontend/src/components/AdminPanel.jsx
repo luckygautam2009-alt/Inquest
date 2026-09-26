@@ -1,11 +1,38 @@
 import { useState, useEffect } from 'react';
-import { X, Lock, Upload, Database, CheckCircle, XCircle } from 'lucide-react';
-import { getAdminOverview, uploadReferenceIdCard, verifyEmployee, getReferenceStatus } from '../api/client';
+import {
+  X,
+  Lock,
+  Upload,
+  Database,
+  Search,
+  LogOut,
+  Shield,
+  CheckCircle2,
+  Sun,
+  Moon,
+  ShieldCheck,
+  Command,
+} from 'lucide-react';
+import {
+  getAdminOverview,
+  uploadReferenceIdCard,
+  getReferenceStatus,
+  getOrCreateAdminProfile,
+  updateAdminProfilePhoto,
+  updateAdminProfileName,
+} from '../api/client';
+import { useTheme } from '../hooks/useTheme';
 import IDScanner from './IDScanner';
-
-const TABLES = ['customers', 'orders', 'payments', 'refunds', 'tickets', 'securityEvents', 'policies'];
+import LeftNav from './admin/LeftNav';
+import StatCards from './admin/StatCards';
+import DataTable from './admin/DataTable';
+import ProfileSidebar from './admin/ProfileSidebar';
 
 export default function AdminPanel({ onClose }) {
+  // Theme hook shared with the entire application
+  const { theme, toggleTheme } = useTheme();
+
+  // Pre-unlock verification state
   const [refConfigured, setRefConfigured] = useState(null); // null = checking
   const [setupPassword, setSetupPassword] = useState('');
   const [setupFile, setSetupFile] = useState(null);
@@ -19,11 +46,16 @@ export default function AdminPanel({ onClose }) {
 
   const [unlocked, setUnlocked] = useState(false);
   const [data, setData] = useState(null);
+  const [adminProfile, setAdminProfile] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
   const [activeTable, setActiveTable] = useState('customers');
 
+  // Top header search bar state (filters active table client-side across all columns)
+  const [globalSearch, setGlobalSearch] = useState('');
+
+  // Reference card update state (post-unlock)
   const [refFile, setRefFile] = useState(null);
   const [refMsg, setRefMsg] = useState(null);
 
@@ -41,14 +73,47 @@ export default function AdminPanel({ onClose }) {
     setVerifyResult(verifyData);
     setLoading(true);
     try {
-      const overviewRes = await getAdminOverview(password);
+      const [overviewRes, profileRes] = await Promise.all([
+        getAdminOverview(password),
+        getOrCreateAdminProfile({ email, name, adminPassword: password }),
+      ]);
       setData(overviewRes.data);
+      if (profileRes.profile) {
+        setAdminProfile(profileRes.profile);
+      }
       setUnlocked(true);
     } catch (err) {
       setError(err.message || 'Could not load admin data');
       setScanning(false);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleUpdatePhoto(photoBase64) {
+    try {
+      const res = await updateAdminProfilePhoto({ email, photo: photoBase64, adminPassword: password });
+      if (res.success && res.profile) {
+        setAdminProfile(res.profile);
+      }
+      return res;
+    } catch (err) {
+      console.error('Failed to update profile photo:', err);
+      throw err;
+    }
+  }
+
+  async function handleUpdateName(newName) {
+    try {
+      const res = await updateAdminProfileName({ email, name: newName, adminPassword: password });
+      if (res.success && res.profile) {
+        setAdminProfile(res.profile);
+        setName(res.profile.name);
+      }
+      return res;
+    } catch (err) {
+      console.error('Failed to update profile name:', err);
+      throw err;
     }
   }
 
@@ -91,62 +156,213 @@ export default function AdminPanel({ onClose }) {
     }
   }
 
-  const rows = data?.[activeTable] || [];
-  const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-ink-light border border-border-strong rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-lg relative">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <div className="flex items-center gap-2.5">
-            <Database className="w-5 h-5 text-amber" />
-            <h3 className="font-display text-xl text-paper">Admin Panel</h3>
+  // ── 1. POST-UNLOCK FULL-SCREEN ADMIN DASHBOARD ──
+  if (unlocked) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col bg-ink text-paper overflow-hidden font-sans select-none">
+        {/* Full-width Top Enterprise Header */}
+        <header className="h-14 px-4 sm:px-5 border-b border-border bg-ink-light flex items-center justify-between gap-4 shrink-0 shadow-xs z-20 transition-colors">
+          {/* Left Brand Area */}
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-amber-dim text-amber flex items-center justify-center shrink-0 border border-amber/25 shadow-2xs">
+              <ShieldCheck className="w-4.5 h-4.5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-bold text-paper leading-none tracking-tight">
+                  INQUEST Admin
+                </h1>
+                <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-dim text-amber border border-amber/25">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber" />
+                  Console
+                </span>
+              </div>
+              <p className="text-[10px] text-muted hidden sm:block leading-tight mt-0.5">
+                Biometric ID Verified Session
+              </p>
+            </div>
           </div>
-          <button onClick={onClose} className="text-muted hover:text-paper cursor-pointer">
-            <X className="w-5 h-5" />
+
+          {/* Center Global Search Bar (Client-side filtering across active table) */}
+          <div className="flex-1 max-w-lg mx-2 sm:mx-6">
+            <div className="relative w-full">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+              <input
+                type="text"
+                value={globalSearch}
+                onChange={(e) => setGlobalSearch(e.target.value)}
+                placeholder="Search across all columns in active table…"
+                className="w-full bg-ink-inset border border-border rounded-lg pl-8 pr-12 py-1.5 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-amber/50 transition-all"
+              />
+              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 text-[10px] font-mono text-muted/70 bg-ink-light px-1 py-0.5 rounded border border-border pointer-events-none">
+                <Command className="w-2.5 h-2.5" />
+                <span>K</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Controls: Staff Badge + Theme Toggle + Exit Dashboard */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {/* Session indicator */}
+            <div className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-ink-inset border border-border text-xs">
+              <div className="w-6 h-6 rounded-full border border-amber/40 bg-amber-dim text-amber flex items-center justify-center font-bold text-[10px] overflow-hidden shrink-0 aspect-square">
+                {adminProfile?.profile_photo ? (
+                  <img
+                    src={adminProfile.profile_photo}
+                    alt={adminProfile.name || name}
+                    className="w-full h-full object-cover object-center shrink-0 aspect-square block"
+                  />
+                ) : (
+                  (adminProfile?.name || name)?.slice(0, 1).toUpperCase() || 'A'
+                )}
+              </div>
+              <div className="flex items-center gap-1 text-[11px]">
+                <span className="text-muted">Staff:</span>
+                <span className="font-semibold text-paper truncate max-w-[120px]">{adminProfile?.name || name}</span>
+                <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+              </div>
+            </div>
+
+            {/* Dark / Light Theme Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-ink-inset hover:bg-ink-lighter border border-border text-paper text-xs font-medium transition-all duration-150 cursor-pointer shadow-2xs"
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              aria-label="Toggle color theme"
+            >
+              {theme === 'dark' ? (
+                <>
+                  <Sun className="w-3.5 h-3.5 text-amber-light" />
+                  <span className="hidden sm:inline text-[11px]">Light</span>
+                </>
+              ) : (
+                <>
+                  <Moon className="w-3.5 h-3.5 text-slate-600" />
+                  <span className="hidden sm:inline text-[11px]">Dark</span>
+                </>
+              )}
+            </button>
+
+            {/* Exit Dashboard */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-ink-inset hover:bg-ink text-paper text-xs font-medium transition-all cursor-pointer shadow-2xs"
+              title="Exit admin dashboard"
+            >
+              <LogOut className="w-3.5 h-3.5 text-muted" />
+              <span className="hidden sm:inline text-[11px]">Exit</span>
+            </button>
+          </div>
+        </header>
+
+        {/* 3-Column Dashboard Body */}
+        <div className="flex-1 flex overflow-hidden relative">
+          {/* Left Navigation */}
+          <LeftNav
+            activeTable={activeTable}
+            setActiveTable={setActiveTable}
+            data={data}
+          />
+
+          {/* Center Main Content Area */}
+          <main className="flex-1 flex flex-col p-3.5 sm:p-4.5 overflow-y-auto min-w-0 bg-ink transition-colors">
+            {/* Real KPI Statistics */}
+            <StatCards data={data} />
+
+            {/* Dense Data Table */}
+            <DataTable
+              activeTable={activeTable}
+              data={data}
+              searchQuery={globalSearch}
+              setSearchQuery={setGlobalSearch}
+            />
+          </main>
+
+          {/* Right Profile & Activity Sidebar */}
+          <ProfileSidebar
+            verifiedName={adminProfile?.name || name}
+            verifiedEmail={email}
+            adminProfile={adminProfile}
+            onUpdatePhoto={handleUpdatePhoto}
+            onUpdateName={handleUpdateName}
+            verifyResult={verifyResult}
+            data={data}
+            refFile={refFile}
+            setRefFile={setRefFile}
+            handleUploadReference={handleUploadReference}
+            refMsg={refMsg}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ── 2. PRE-UNLOCK AUTHENTICATION MODAL ──
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+      <div className="bg-ink-light border border-border rounded-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-xl relative transition-colors">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-amber-dim text-amber flex items-center justify-center border border-amber/20">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <h3 className="font-bold text-sm text-paper">Admin Authentication</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-md text-muted hover:text-paper hover:bg-ink-inset cursor-pointer transition-colors"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {refConfigured === null ? (
-          <div className="p-10 text-center text-sm text-muted">Checking reference status...</div>
+          <div className="p-10 text-center text-xs text-muted flex flex-col items-center justify-center gap-2">
+            <span className="w-5 h-5 border-2 border-amber/40 border-t-amber rounded-full animate-spin" />
+            <span>Checking security configuration…</span>
+          </div>
         ) : !refConfigured ? (
           <form onSubmit={handleSetupReference} className="p-6 space-y-4 max-w-md mx-auto w-full">
-            <div className="flex items-center gap-2 text-sm text-muted mb-1">
-              <Lock className="w-4 h-4" /> One-time setup: upload the reference NIET ID card
+            <div className="flex items-center gap-2 text-xs font-semibold text-paper mb-1">
+              <Lock className="w-4 h-4 text-amber" /> One-time setup: upload the reference NIET ID card
             </div>
-            <p className="text-xs text-muted">
-              No reference ID card is configured yet. An admin must upload one photo of a valid
-              NIET ID card once — all future verification scans will be compared against it.
+            <p className="text-xs text-muted leading-relaxed">
+              No reference ID card is configured yet. Upload one photo of a valid NIET ID card template once — all future verification scans will be compared against it.
             </p>
             <input
               value={setupPassword}
               onChange={(e) => setSetupPassword(e.target.value)}
               type="password"
               placeholder="Admin password"
-              className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
+              className="w-full bg-ink-inset border border-border rounded-lg px-3.5 py-2 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-amber/50"
             />
-            <label className="flex items-center gap-2 border border-dashed border-border-strong rounded-lg px-3.5 py-3 text-sm text-muted cursor-pointer hover:border-amber/50 transition-colors">
-              <Upload className="w-4 h-4" />
-              {setupFile ? setupFile.name : 'Upload reference NIET ID card photo'}
+            <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-border rounded-xl p-5 text-center cursor-pointer hover:border-amber/50 transition-colors bg-ink-inset/40">
+              <Upload className="w-5 h-5 text-amber" />
+              <span className="text-xs font-semibold text-paper">
+                {setupFile ? setupFile.name : 'Upload reference NIET ID card photo'}
+              </span>
+              <span className="text-[10px] text-muted">JPG, PNG, or WebP</span>
               <input type="file" accept="image/*" className="hidden" onChange={(e) => setSetupFile(e.target.files?.[0] || null)} />
             </label>
             {setupError && <p className="text-xs text-alert">{setupError}</p>}
             <button
               type="submit"
               disabled={setupLoading}
-              className="w-full bg-amber text-ink font-bold px-4 py-2.5 rounded-lg text-sm disabled:opacity-50 cursor-pointer"
+              className="w-full bg-amber text-ink font-bold px-4 py-2 rounded-lg text-xs hover:bg-amber-light disabled:opacity-50 cursor-pointer transition-all shadow-xs"
             >
-              {setupLoading ? 'Saving...' : 'Save Reference & Continue'}
+              {setupLoading ? 'Saving…' : 'Save Reference & Continue'}
             </button>
           </form>
-        ) : !unlocked ? (
+        ) : (
           loading ? (
             <div className="p-12 flex flex-col items-center justify-center gap-3 text-center">
               <span className="w-7 h-7 border-2 border-amber/40 border-t-amber rounded-full animate-spin" />
-              <p className="text-sm font-semibold text-paper">Unlocking admin console…</p>
+              <p className="text-xs font-semibold text-paper">Unlocking admin console…</p>
             </div>
           ) : scanning ? (
-            <div className="p-6 max-w-md mx-auto w-full">
+            <div className="p-5 max-w-md mx-auto w-full">
               <IDScanner
                 name={name.trim()}
                 email={email.trim()}
@@ -156,105 +372,55 @@ export default function AdminPanel({ onClose }) {
               />
             </div>
           ) : (
-            <form onSubmit={handleStartScan} className="p-6 space-y-4 overflow-y-auto max-w-md mx-auto w-full">
-              <div className="flex items-center gap-2 text-sm text-muted mb-1">
-                <Lock className="w-4 h-4" /> Identity verification required to access admin data
+            <form onSubmit={handleStartScan} className="p-5 sm:p-6 space-y-3.5 max-w-md mx-auto w-full">
+              <div className="flex items-center gap-2 text-xs font-semibold text-paper mb-1">
+                <Lock className="w-3.5 h-3.5 text-amber" /> Identity verification required to access admin console
               </div>
 
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Full name"
-                className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
-              />
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                type="email"
-                placeholder="Email"
-                className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
-              />
-              <input
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                type="password"
-                placeholder="Admin password"
-                className="w-full bg-ink border border-border-strong rounded-lg px-3.5 py-2.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-amber/50"
-              />
+              <div className="space-y-2.5">
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted mb-1">Full Name</label>
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Yash Gautam"
+                    className="w-full bg-ink-inset border border-border rounded-lg px-3 py-2 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-amber/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted mb-1">Email Address</label>
+                  <input
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    type="email"
+                    placeholder="e.g. luckygautam2009@gmail.com"
+                    className="w-full bg-ink-inset border border-border rounded-lg px-3 py-2 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-amber/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted mb-1">Admin Password</label>
+                  <input
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    type="password"
+                    placeholder="••••••••••••"
+                    className="w-full bg-ink-inset border border-border rounded-lg px-3 py-2 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-amber/50"
+                  />
+                </div>
+              </div>
 
               {error && <p className="text-xs text-alert">{error}</p>}
 
               <button
                 type="submit"
-                className="w-full bg-amber text-ink font-bold px-4 py-2.5 rounded-lg text-sm cursor-pointer"
+                className="w-full bg-amber text-ink font-bold px-4 py-2.5 rounded-lg text-xs hover:bg-amber-light transition-all cursor-pointer shadow-xs"
               >
-                Start ID Scan
+                Proceed to ID Verification
               </button>
             </form>
           )
-        ) : (
-          <div className="flex flex-col overflow-hidden flex-1">
-            <div className="px-6 py-3 border-b border-border flex items-center gap-2 text-xs text-verified">
-              <CheckCircle className="w-4 h-4" />
-              Verified — {name}
-            </div>
-
-            <div className="px-6 py-4 border-b border-border flex flex-wrap items-center gap-3">
-              <label className="flex items-center gap-2 border border-dashed border-border-strong rounded-lg px-3.5 py-2 text-xs text-muted cursor-pointer hover:border-amber/50">
-                <Upload className="w-4 h-4" />
-                {refFile ? refFile.name : 'Upload new reference NIET ID card'}
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => setRefFile(e.target.files?.[0] || null)} />
-              </label>
-              <button
-                onClick={handleUploadReference}
-                className="text-xs font-bold bg-ink-lighter text-paper px-3.5 py-2 rounded-lg border border-border-strong cursor-pointer"
-              >
-                Save Reference
-              </button>
-              {refMsg && <span className="text-xs text-muted">{refMsg}</span>}
-            </div>
-
-            <div className="px-6 py-3 border-b border-border flex flex-wrap gap-2">
-              {TABLES.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setActiveTable(t)}
-                  className={`text-xs font-semibold px-3 py-1.5 rounded-lg border cursor-pointer transition-colors ${
-                    activeTable === t
-                      ? 'bg-amber text-ink border-amber'
-                      : 'bg-ink-lighter text-muted border-border-strong hover:text-paper'
-                  }`}
-                >
-                  {t} ({data?.[t]?.length || 0})
-                </button>
-              ))}
-            </div>
-
-            <div className="overflow-auto flex-1 p-6">
-              {rows.length === 0 ? (
-                <p className="text-sm text-muted">No rows in {activeTable}.</p>
-              ) : (
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-border-strong">
-                      {columns.map((c) => (
-                        <th key={c} className="text-left py-2 pr-4 text-muted font-bold uppercase tracking-wide">{c}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, i) => (
-                      <tr key={i} className="border-b border-border">
-                        {columns.map((c) => (
-                          <td key={c} className="py-2 pr-4 text-paper whitespace-nowrap">{String(row[c] ?? '—')}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
         )}
       </div>
     </div>

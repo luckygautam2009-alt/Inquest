@@ -1,77 +1,148 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, XCircle, ScanLine, Upload } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, ScanLine, Upload, RotateCcw } from 'lucide-react';
 import { verifyEmployee } from '../api/client';
 
-const SCAN_INTERVAL_MS = 2500;
-const RESULT_DISPLAY_MS = 1600;
+const VERIFY_STAGES = [
+  'Uploading document…',
+  'Analyzing document…',
+  'Checking NIET identity card…',
+  'Comparing with reference template…',
+  'Finalizing verification…',
+];
 
-// Browser's built-in Face Detector (Chrome/Edge only, may be undefined elsewhere)
-const FaceDetectorAPI = typeof window !== 'undefined' ? window.FaceDetector : undefined;
+function mapCameraError(err) {
+  const name = err?.name || '';
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return 'Camera access was denied. Please allow camera permissions in your browser settings to scan your ID.';
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return 'No camera device was detected. Please connect a camera or use "Upload photo instead" below.';
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return 'Camera is in use by another application or tab. Please close other camera apps and click Try Again.';
+    case 'OverconstrainedError':
+    case 'ConstraintNotSatisfiedError':
+      return 'Requested camera settings could not be satisfied. Retrying with basic video settings…';
+    case 'SecurityError':
+      return 'Camera access was blocked by browser security policy. Please ensure the page is served over HTTPS or localhost.';
+    case 'AbortError':
+      return 'Camera initialization was aborted. Please click Try Again.';
+    default:
+      return err?.message
+        ? `Camera access error (${err.message}). Please use "Upload photo instead" below.`
+        : 'Camera could not be started. Please check permissions or use "Upload photo instead" below.';
+  }
+}
 
-/**
- * Metro-gate style continuous scanner with file-upload fallback.
- * If the browser supports getUserMedia the camera feed is used; otherwise
- * (or if the user prefers), a simple file-upload path is shown.
- */
 export default function IDScanner({ name, email, adminPassword, onVerified, onCancel }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
-  const timerRef = useRef(null);
   const activeRef = useRef(true);
-  const faceDetectorRef = useRef(null);
+  const isVerifyingRef = useRef(false);
+  const stageTimerRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  const [mode, setMode] = useState('camera'); // 'camera' | 'upload'
+  // Camera states: 'CAMERA_STARTING' | 'CAMERA_READY' | 'CAMERA_ERROR'
+  const [cameraStatus, setCameraStatus] = useState('CAMERA_STARTING');
   const [cameraError, setCameraError] = useState(null);
-  const [phase, setPhase] = useState('scanning'); // 'scanning' | 'face' | 'checking' | 'success' | 'failed'
-  const [lastReason, setLastReason] = useState(null);
-  const [confidence, setConfidence] = useState(null);
 
-  // Upload mode state
-  const [uploadFile, setUploadFile] = useState(null);
-  const [uploadPreview, setUploadPreview] = useState(null);
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadError, setUploadError] = useState(null);
-  const [uploadResult, setUploadResult] = useState(null);
+  // Workflow phases: 'idle' | 'uploading' | 'verifying' | 'success' | 'rejected' | 'error'
+  const [phase, setPhase] = useState('idle');
+  const [stageIndex, setStageIndex] = useState(0);
+  const [reason, setReason] = useState(null);
+  const [capturedPreview, setCapturedPreview] = useState(null);
 
   useEffect(() => {
     activeRef.current = true;
-    if (FaceDetectorAPI) {
-      try {
-        faceDetectorRef.current = new FaceDetectorAPI({ fastMode: true, maxDetectedFaces: 1 });
-      } catch {
-        faceDetectorRef.current = null;
-      }
-    }
-    if (mode === 'camera') startCamera();
+    startCamera();
     return () => {
       activeRef.current = false;
-      clearTimeout(timerRef.current);
+      clearInterval(stageTimerRef.current);
       stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, []);
 
-  async function startCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setCameraError(null);
-      scheduleNextScan();
-    } catch {
-      setCameraError('Camera access denied or unavailable.');
+  function stopCamera() {
+    if (streamRef.current) {
+      try {
+        streamRef.current.getTracks().forEach((track) => {
+          track.stop();
+        });
+      } catch (err) {
+        console.warn('[IDScanner] stopCamera error:', err);
+      }
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
   }
 
-  function stopCamera() {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
+  async function startCamera() {
+    // Stop and detach any existing stream before requesting a new one
+    stopCamera();
+    setCameraStatus('CAMERA_STARTING');
+    setCameraError(null);
+
+    let stream = null;
+    try {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      } catch (firstErr) {
+        // Fallback to basic video without resolution/facingMode constraints
+        if (
+          firstErr.name === 'OverconstrainedError' ||
+          firstErr.name === 'ConstraintNotSatisfiedError' ||
+          firstErr.name === 'NotFoundError'
+        ) {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        } else {
+          throw firstErr;
+        }
+      }
+
+      if (!activeRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn('[IDScanner] video.play() notice:', playErr);
+        }
+      }
+      setCameraStatus('CAMERA_READY');
+    } catch (err) {
+      if (!activeRef.current) return;
+      stopCamera();
+      const mappedMsg = mapCameraError(err);
+      setCameraError(mappedMsg);
+      setCameraStatus('CAMERA_ERROR');
+    }
   }
 
-  function scheduleNextScan() {
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(runScan, SCAN_INTERVAL_MS);
+  function startStageProgress() {
+    setStageIndex(0);
+    clearInterval(stageTimerRef.current);
+    stageTimerRef.current = setInterval(() => {
+      setStageIndex((prev) => (prev < VERIFY_STAGES.length - 1 ? prev + 1 : prev));
+    }, 400);
+  }
+
+  function stopStageProgress() {
+    clearInterval(stageTimerRef.current);
   }
 
   function drawGuideRegionToCanvas() {
@@ -79,10 +150,10 @@ export default function IDScanner({ name, email, adminPassword, onVerified, onCa
     const canvas = canvasRef.current;
     if (!video || !canvas || video.readyState < 2) return null;
 
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    const cropW = vw * 0.78;
-    const cropH = vh * 0.68;
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 480;
+    const cropW = vw * 0.85;
+    const cropH = vh * 0.75;
     const cropX = (vw - cropW) / 2;
     const cropY = (vh - cropH) / 2;
 
@@ -93,320 +164,308 @@ export default function IDScanner({ name, email, adminPassword, onVerified, onCa
     return canvas;
   }
 
-  async function looksLikeFace(canvas) {
-    if (!faceDetectorRef.current) return false;
+  async function processVerification(file, previewUrl = null) {
+    // Ensure only one verification request can be in-flight at any time
+    if (isVerifyingRef.current) return;
+    isVerifyingRef.current = true;
+    setReason(null);
+    setCapturedPreview(previewUrl);
+
+    setPhase('uploading');
+    startStageProgress();
+    setPhase('verifying');
+
     try {
-      const faces = await faceDetectorRef.current.detect(canvas);
-      if (!faces || faces.length === 0) return false;
-      const face = faces[0];
-      const faceArea = face.boundingBox.width * face.boundingBox.height;
-      const frameArea = canvas.width * canvas.height;
-      return faceArea / frameArea > 0.18;
-    } catch {
-      return false;
-    }
-  }
-
-  async function runScan() {
-    if (!activeRef.current) return;
-    const canvas = drawGuideRegionToCanvas();
-    if (!canvas) {
-      scheduleNextScan();
-      return;
-    }
-
-    const faceDetected = await looksLikeFace(canvas);
-    if (faceDetected) {
-      setPhase('face');
-      setTimeout(() => {
-        if (!activeRef.current) return;
-        setPhase('scanning');
-        scheduleNextScan();
-      }, 1200);
-      return;
-    }
-
-    setPhase('checking');
-    canvas.toBlob(async (blob) => {
-      if (!blob || !activeRef.current) {
-        scheduleNextScan();
-        return;
-      }
-      const file = new File([blob], 'id-scan.jpg', { type: 'image/jpeg' });
-      await sendVerification(file, /* isUploadMode */ false);
-    }, 'image/jpeg', 0.85);
-  }
-
-  async function sendVerification(file, isUploadMode) {
-    try {
-      const res = await verifyEmployee({ file, employeeName: name, employeeEmail: email, adminPassword });
+      const res = await verifyEmployee({
+        file,
+        employeeName: name,
+        employeeEmail: email,
+        adminPassword,
+      });
 
       if (!activeRef.current) return;
+      stopStageProgress();
 
-      if (res.data.verified) {
-        setConfidence(res.data.confidence);
-        if (isUploadMode) {
-          setUploadResult(res.data);
-          setTimeout(() => activeRef.current && onVerified(res.data), RESULT_DISPLAY_MS);
-        } else {
-          setPhase('success');
-          stopCamera();
-          setTimeout(() => activeRef.current && onVerified(res.data), RESULT_DISPLAY_MS);
-        }
+      if (res.data && res.data.verified) {
+        setPhase('success');
+        stopCamera();
+        setTimeout(() => {
+          if (activeRef.current) {
+            onVerified(res.data);
+          }
+        }, 1200);
       } else {
-        const reason = res.data.reason || 'ID card did not match the reference.';
-        if (isUploadMode) {
-          setUploadError(reason);
-          setUploadLoading(false);
-        } else {
-          setLastReason(reason);
-          setPhase('failed');
-          setTimeout(() => {
-            if (!activeRef.current) return;
-            setPhase('scanning');
-            scheduleNextScan();
-          }, RESULT_DISPLAY_MS);
-        }
+        const failReason =
+          res.data?.reason ||
+          'Verification failed. This document does not match the valid NIET ID card reference.';
+        setReason(failReason);
+        setPhase('rejected');
       }
     } catch (err) {
       if (!activeRef.current) return;
-      const reason = err.message || 'Verification request failed';
-      if (isUploadMode) {
-        setUploadError(reason);
-        setUploadLoading(false);
-      } else {
-        setLastReason(reason);
-        setPhase('failed');
-        setTimeout(() => {
-          if (!activeRef.current) return;
-          setPhase('scanning');
-          scheduleNextScan();
-        }, RESULT_DISPLAY_MS);
-      }
+      stopStageProgress();
+      const isTimeout = /timeout|timed out/i.test(err.message || '');
+      const errMsg = isTimeout
+        ? 'Verification timed out. Please try again.'
+        : err.message || 'Verification could not be completed. Please try again.';
+      setReason(errMsg);
+      setPhase('error');
+    } finally {
+      isVerifyingRef.current = false;
     }
   }
 
-  // ── Upload handlers ──
-  function handleFileSelect(e) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setUploadFile(f);
-    setUploadError(null);
-    setUploadResult(null);
-    const reader = new FileReader();
-    reader.onload = () => setUploadPreview(reader.result);
-    reader.readAsDataURL(f);
+  function handleCapture() {
+    if (isVerifyingRef.current || phase === 'uploading' || phase === 'verifying') return;
+
+    const canvas = drawGuideRegionToCanvas();
+    if (!canvas) {
+      setReason('Unable to capture camera frame. Please ensure camera is ready or use file upload.');
+      setPhase('error');
+      return;
+    }
+
+    const previewUrl = canvas.toDataURL('image/jpeg', 0.85);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setReason('Failed to capture image. Please try again.');
+          setPhase('error');
+          return;
+        }
+        const file = new File([blob], 'id-capture.jpg', { type: 'image/jpeg' });
+        processVerification(file, previewUrl);
+      },
+      'image/jpeg',
+      0.92
+    );
   }
 
-  async function handleUploadVerify() {
-    if (!uploadFile) return;
-    setUploadLoading(true);
-    setUploadError(null);
-    setUploadResult(null);
-    await sendVerification(uploadFile, true);
+  function handleFileUpload(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (isVerifyingRef.current || phase === 'uploading' || phase === 'verifying') return;
+
+    const previewUrl = URL.createObjectURL(file);
+    processVerification(file, previewUrl);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
-  function switchToUpload() {
-    clearTimeout(timerRef.current);
-    stopCamera();
-    setMode('upload');
+  async function handleRetry() {
+    isVerifyingRef.current = false;
+    setPhase('idle');
+    setReason(null);
+    setCapturedPreview(null);
+    // Fresh stream requested for retry session
+    await startCamera();
   }
 
-  function switchToCamera() {
-    setUploadFile(null);
-    setUploadPreview(null);
-    setUploadError(null);
-    setUploadResult(null);
-    setMode('camera');
-  }
+  const isBusy = phase === 'uploading' || phase === 'verifying';
+  const showVideo = cameraStatus === 'CAMERA_READY';
 
   return (
-    <div className="space-y-4">
-      {/* Mode tabs */}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={switchToCamera}
-          className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
-            mode === 'camera'
-              ? 'bg-amber text-ink border-amber'
-              : 'bg-ink-lighter text-muted border-border-strong hover:text-paper'
-          }`}
-        >
-          📷 Camera Scan
-        </button>
-        <button
-          type="button"
-          onClick={switchToUpload}
-          className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
-            mode === 'upload'
-              ? 'bg-amber text-ink border-amber'
-              : 'bg-ink-lighter text-muted border-border-strong hover:text-paper'
-          }`}
-        >
-          📁 Upload Photo
-        </button>
-      </div>
-
-      {/* ── Camera mode ── */}
-      {mode === 'camera' && (
-        <>
-          <div className="relative rounded-xl overflow-hidden border border-border-strong bg-ink aspect-video">
-            {cameraError ? (
-              <div className="flex flex-col items-center justify-center h-full text-xs text-alert p-4 text-center gap-3">
-                <XCircle className="w-8 h-8" />
-                <p>{cameraError}</p>
-                <button
-                  type="button"
-                  onClick={switchToUpload}
-                  className="text-amber font-bold hover:text-amber-light cursor-pointer underline"
-                >
-                  Upload a photo instead →
-                </button>
-              </div>
-            ) : (
-              <>
-                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-
-                {phase !== 'success' && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="relative w-[78%] h-[68%]">
-                      {['top-0 left-0 border-t-2 border-l-2', 'top-0 right-0 border-t-2 border-r-2',
-                        'bottom-0 left-0 border-b-2 border-l-2', 'bottom-0 right-0 border-b-2 border-r-2']
-                        .map((cls, i) => (
-                          <div
-                            key={i}
-                            className={`absolute ${cls} w-8 h-8 rounded-sm transition-all duration-200 ${
-                              phase === 'failed' || phase === 'face'
-                                ? 'border-alert'
-                                : phase === 'checking'
-                                ? 'border-alert scale-95'
-                                : 'border-amber'
-                            }`}
-                          />
-                        ))}
-                      {phase === 'scanning' && (
-                        <div className="absolute left-0 right-0 h-0.5 bg-amber/80 shadow-[0_0_12px_2px_rgba(217,119,6,0.6)] scanline" />
-                      )}
-                      {phase === 'checking' && (
-                        <div className="absolute inset-0 border-2 border-alert rounded-md bg-alert/10 lock-pulse" />
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="absolute bottom-3 left-0 right-0 flex justify-center px-4">
-                  {phase === 'scanning' && (
-                    <span className="flex items-center gap-1.5 text-xs font-semibold text-paper bg-ink/75 px-3 py-1.5 rounded-full backdrop-blur-sm">
-                      <ScanLine className="w-3.5 h-3.5 text-amber" />
-                      Hold ID card steady in frame — scanning…
-                    </span>
-                  )}
-                  {phase === 'face' && (
-                    <span className="flex items-center gap-1.5 text-xs font-semibold text-alert bg-ink/85 px-3 py-1.5 rounded-full backdrop-blur-sm">
-                      <XCircle className="w-3.5 h-3.5" />
-                      Face detected — show your ID card instead
-                    </span>
-                  )}
-                  {phase === 'checking' && (
-                    <span className="flex items-center gap-1.5 text-xs font-semibold text-paper bg-ink/75 px-3 py-1.5 rounded-full backdrop-blur-sm">
-                      <span className="w-2.5 h-2.5 border-2 border-amber/40 border-t-amber rounded-full animate-spin" />
-                      Checking…
-                    </span>
-                  )}
-                  {phase === 'failed' && (
-                    <span className="flex items-center gap-1.5 text-xs font-semibold text-alert bg-ink/85 px-3 py-1.5 rounded-full backdrop-blur-sm">
-                      <XCircle className="w-3.5 h-3.5" />
-                      No match — resuming scan
-                    </span>
-                  )}
-                </div>
-
-                {phase === 'success' && (
-                  <div className="absolute inset-0 bg-ink/95 flex flex-col items-center justify-center gap-3">
-                    <CheckCircle2 className="w-14 h-14 text-verified pop-in" />
-                    <span className="text-base font-bold text-verified">Access Granted</span>
-                  </div>
-                )}
-              </>
-            )}
-            <canvas ref={canvasRef} className="hidden" />
+    <div className="space-y-3.5">
+      <div className="relative rounded-xl overflow-hidden border border-border bg-ink-inset aspect-video shadow-xs">
+        {/* Camera starting spinner */}
+        {cameraStatus === 'CAMERA_STARTING' && !capturedPreview && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-xs text-muted z-10 bg-ink-inset">
+            <span className="w-6 h-6 border-2 border-amber/40 border-t-amber rounded-full animate-spin" />
+            <span>Initializing camera…</span>
           </div>
+        )}
 
-          {lastReason && phase === 'scanning' && (
-            <p className="text-[11px] text-muted text-center">Last attempt: {lastReason}</p>
-          )}
-        </>
-      )}
-
-      {/* ── Upload mode ── */}
-      {mode === 'upload' && (
-        <div className="space-y-3.5">
-          {/* File picker / preview */}
-          {uploadPreview ? (
-            <div className="relative rounded-xl overflow-hidden border border-border-strong bg-ink">
-              <img src={uploadPreview} alt="ID card preview" className="w-full object-contain max-h-64" />
-              {uploadResult?.verified && (
-                <div className="absolute inset-0 bg-ink/90 flex flex-col items-center justify-center gap-3">
-                  <CheckCircle2 className="w-14 h-14 text-verified pop-in" />
-                  <span className="text-base font-bold text-verified">Access Granted</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-border-strong rounded-xl px-4 py-10 text-sm text-muted cursor-pointer hover:border-amber/50 transition-colors">
-              <Upload className="w-8 h-8 text-muted" />
-              <span className="font-semibold">Click to upload your ID card photo</span>
-              <span className="text-xs text-muted/60">JPG, PNG, or WebP</span>
-              <input type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
-            </label>
-          )}
-
-          {/* Change file */}
-          {uploadFile && !uploadResult?.verified && (
-            <div className="flex items-center justify-between gap-2 text-xs text-muted">
-              <span className="truncate">{uploadFile.name}</span>
-              <label className="text-amber font-semibold cursor-pointer hover:text-amber-light shrink-0">
-                Change file
-                <input type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
-              </label>
-            </div>
-          )}
-
-          {/* Errors */}
-          {uploadError && (
-            <div className="flex items-start gap-2 text-xs text-alert bg-alert-dim border border-alert/30 rounded-lg px-3 py-2 font-medium">
-              <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{uploadError}</span>
-            </div>
-          )}
-
-          {/* Verify button */}
-          {uploadFile && !uploadResult?.verified && (
+        {/* Camera error state */}
+        {cameraStatus === 'CAMERA_ERROR' && !capturedPreview && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-xs text-alert p-5 text-center gap-2.5 z-10 bg-ink-inset">
+            <AlertTriangle className="w-6 h-6 text-amber" />
+            <span className="leading-relaxed max-w-sm">{cameraError}</span>
             <button
               type="button"
-              onClick={handleUploadVerify}
-              disabled={uploadLoading}
-              className="w-full bg-amber text-ink font-bold px-4 py-2.5 rounded-lg text-sm disabled:opacity-50 hover:bg-amber-light transition-colors cursor-pointer"
+              onClick={startCamera}
+              className="mt-1 bg-amber/20 hover:bg-amber/30 text-amber font-semibold px-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer"
             >
-              {uploadLoading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <span className="w-3.5 h-3.5 border-2 border-ink/30 border-t-ink rounded-full animate-spin" />
-                  Verifying…
-                </span>
-              ) : (
-                'Verify ID Card'
-              )}
+              Retry Camera Access
             </button>
+          </div>
+        )}
+
+        {/* Captured Preview Overlay (rendered on top without unmounting video element) */}
+        {capturedPreview && phase !== 'idle' && (
+          <img
+            src={capturedPreview}
+            alt="Captured ID"
+            className="absolute inset-0 w-full h-full object-cover z-10"
+          />
+        )}
+
+        {/* Permanent Video Element (never unmounted to avoid stale ref and detached srcObject) */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`w-full h-full object-cover ${showVideo ? 'opacity-100' : 'opacity-0'}`}
+        />
+
+        {/* Scanning Guide Overlay */}
+        {phase !== 'success' && cameraStatus === 'CAMERA_READY' && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+            <div className="relative w-[85%] h-[75%]">
+              {[
+                'top-0 left-0 border-t-2 border-l-2',
+                'top-0 right-0 border-t-2 border-r-2',
+                'bottom-0 left-0 border-b-2 border-l-2',
+                'bottom-0 right-0 border-b-2 border-r-2',
+              ].map((cls, i) => (
+                <div
+                  key={i}
+                  className={`absolute ${cls} w-7 h-7 rounded-sm transition-all duration-200 ${
+                    phase === 'rejected' || phase === 'error'
+                      ? 'border-alert'
+                      : isBusy
+                      ? 'border-amber scale-98'
+                      : 'border-amber/80'
+                  }`}
+                />
+              ))}
+
+              {phase === 'idle' && (
+                <div className="absolute left-0 right-0 h-0.5 bg-amber/80 shadow-[0_0_12px_2px_rgba(217,119,6,0.6)] scanline" />
+              )}
+
+              {isBusy && (
+                <div className="absolute inset-0 border-2 border-amber rounded-md bg-amber/10 lock-pulse" />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Status Pills */}
+        <div className="absolute bottom-2.5 left-0 right-0 flex justify-center px-4 z-20">
+          {phase === 'idle' && cameraStatus === 'CAMERA_READY' && (
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-paper bg-ink/80 px-3 py-1 rounded-full backdrop-blur-xs border border-border">
+              <ScanLine className="w-3 h-3 text-amber" />
+              Align NIET ID card inside frame
+            </span>
+          )}
+
+          {isBusy && (
+            <span className="flex items-center gap-2 text-[11px] font-semibold text-paper bg-ink/90 px-3 py-1.5 rounded-full backdrop-blur-xs border border-amber/30 shadow-md">
+              <span className="w-2.5 h-2.5 border-2 border-amber/40 border-t-amber rounded-full animate-spin" />
+              {VERIFY_STAGES[stageIndex] || 'Verifying ID…'}
+            </span>
+          )}
+
+          {phase === 'rejected' && (
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-alert bg-ink/90 px-3 py-1.5 rounded-full backdrop-blur-xs border border-alert/30 shadow-md">
+              <XCircle className="w-3.5 h-3.5" />
+              Verification Rejected
+            </span>
+          )}
+
+          {phase === 'error' && (
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-alert bg-ink/90 px-3 py-1.5 rounded-full backdrop-blur-xs border border-alert/30 shadow-md">
+              <AlertTriangle className="w-3.5 h-3.5 text-alert" />
+              Verification Error
+            </span>
+          )}
+        </div>
+
+        {/* Success Screen */}
+        {phase === 'success' && (
+          <div className="absolute inset-0 bg-ink/95 flex flex-col items-center justify-center gap-2.5 z-30">
+            <CheckCircle2 className="w-12 h-12 text-verified pop-in" />
+            <span className="text-sm font-bold text-verified">NIET ID Verified</span>
+            <span className="text-xs text-muted">Access Granted</span>
+          </div>
+        )}
+
+        <canvas ref={canvasRef} className="hidden" />
+      </div>
+
+      {/* Explanatory Rejection / Error Message */}
+      {reason && (phase === 'rejected' || phase === 'error') && (
+        <div className="text-xs text-alert bg-alert-dim border border-alert/30 rounded-lg p-3 text-center leading-relaxed">
+          {reason}
+        </div>
+      )}
+
+      {/* Action Controls */}
+      {phase !== 'success' && (
+        <div className="space-y-2">
+          {phase === 'idle' && (
+            <>
+              <button
+                type="button"
+                id="btn-capture-verify"
+                disabled={isBusy || cameraStatus !== 'CAMERA_READY'}
+                onClick={handleCapture}
+                className="w-full bg-amber text-ink font-bold px-4 py-2.5 rounded-lg text-xs hover:bg-amber-light disabled:opacity-50 transition-all cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <ScanLine className="w-3.5 h-3.5" /> Capture & Verify ID
+              </button>
+
+              <button
+                type="button"
+                id="btn-upload-photo"
+                disabled={isBusy}
+                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-amber hover:text-amber-light disabled:opacity-50 cursor-pointer py-1.5 transition-colors"
+              >
+                <Upload className="w-3.5 h-3.5" /> Upload photo instead
+              </button>
+            </>
+          )}
+
+          {isBusy && (
+            <button
+              type="button"
+              disabled
+              className="w-full bg-ink-inset border border-border text-muted font-semibold px-4 py-2.5 rounded-lg text-xs flex items-center justify-center gap-2 cursor-not-allowed"
+            >
+              <span className="w-3 h-3 border-2 border-amber/40 border-t-amber rounded-full animate-spin" />
+              {VERIFY_STAGES[stageIndex] || 'Processing…'}
+            </button>
+          )}
+
+          {(phase === 'rejected' || phase === 'error') && (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                id="btn-retry-verify"
+                onClick={handleRetry}
+                className="w-full bg-amber text-ink font-bold px-3 py-2 rounded-lg text-xs hover:bg-amber-light transition-all cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Try Again
+              </button>
+
+              <button
+                type="button"
+                id="btn-retry-upload"
+                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                className="w-full bg-ink-inset text-paper border border-border font-semibold px-3 py-2 rounded-lg text-xs hover:bg-ink transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Upload className="w-3.5 h-3.5 text-amber" /> Upload Other
+              </button>
+            </div>
           )}
         </div>
       )}
 
-      {/* Cancel */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileUpload}
+      />
+
       <button
         type="button"
+        id="btn-cancel-verify"
+        disabled={isBusy}
         onClick={onCancel}
-        className="w-full bg-ink-lighter text-paper font-semibold px-4 py-2.5 rounded-lg text-sm border border-border-strong hover:bg-ink transition-colors cursor-pointer"
+        className="w-full bg-ink-inset text-paper font-semibold px-4 py-2 rounded-lg text-xs border border-border hover:bg-ink disabled:opacity-50 transition-colors cursor-pointer"
       >
         Cancel
       </button>

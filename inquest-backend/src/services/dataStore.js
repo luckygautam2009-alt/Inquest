@@ -1,11 +1,18 @@
 const db = require('../db/connection');
 
 function rowToOrder(row) {
-  return { ...row, returnRequested: !!row.returnRequested };
+  if (!row) return null;
+  return {
+    ...row,
+    returnRequested: Boolean(row.returnRequested),
+    deliveredAt: row.deliveredAt || row.deliveredOn || null,
+    deliveredOn: row.deliveredOn || (row.deliveredAt ? row.deliveredAt.slice(0, 10) : null),
+  };
 }
 
 function rowToSecurityEvent(row) {
-  return { ...row, flagged: !!row.flagged };
+  if (!row) return null;
+  return { ...row, flagged: Boolean(row.flagged) };
 }
 
 function nextId(table, prefix, idColumn = 'id') {
@@ -39,44 +46,105 @@ const getSecurityEventsByCustomerId = (id) =>
 
 const getAllPolicies = () => db.prepare('SELECT * FROM policies').all();
 
-function addCustomer({ name, email, tier, order }) {
+function addCustomer(payload) {
+  const customerId = payload.id || nextId('customers', 'CUST');
   const customer = {
-    id: nextId('customers', 'CUST'),
-    name,
-    email,
-    tier: tier || 'silver',
-    joinedOn: new Date().toISOString().slice(0, 10),
+    id: customerId,
+    name: payload.name,
+    email: payload.email,
+    tier: payload.tier || 'silver',
+    joinedDate: payload.joinedDate || payload.joinedOn || new Date().toISOString().slice(0, 10),
+    joinedOn: payload.joinedOn || payload.joinedDate || new Date().toISOString().slice(0, 10),
   };
 
-  db.prepare('INSERT INTO customers (id, name, email, tier, joinedOn) VALUES (@id, @name, @email, @tier, @joinedOn)').run(customer);
+  db.prepare(`
+    INSERT OR REPLACE INTO customers (id, name, email, tier, joinedDate, joinedOn)
+    VALUES (@id, @name, @email, @tier, @joinedDate, @joinedOn)
+  `).run(customer);
 
-  if (order && order.product && order.amount) {
-    const newOrder = {
-      id: nextId('orders', 'ORDER'),
+  const rawOrders = Array.isArray(payload.orders)
+    ? payload.orders
+    : payload.order
+    ? [payload.order]
+    : [];
+
+  const createdOrders = [];
+  const createdPayments = [];
+
+  rawOrders.forEach((o, index) => {
+    if (!o) return;
+    const orderId = o.id || nextId('orders', 'ORDER');
+    const orderAmount = Number(o.amount || 0);
+    const orderRecord = {
+      id: orderId,
       customerId: customer.id,
-      product: order.product,
-      amount: Number(order.amount),
-      status: order.status || 'delivered',
-      deliveredOn: order.status === 'in_transit' ? null : new Date().toISOString().slice(0, 10),
-      returnRequested: 0,
+      product: o.product || 'Standard Product',
+      amount: orderAmount,
+      status: o.status || 'delivered',
+      deliveredAt: o.deliveredAt || (o.status === 'in_transit' ? null : new Date().toISOString()),
+      deliveredOn: o.deliveredOn || (o.status === 'in_transit' ? null : new Date().toISOString().slice(0, 10)),
+      returnRequested: o.returnRequested ? 1 : 0,
+      cancelledAt: o.cancelledAt || null,
+      cancellationReason: o.cancellationReason || null,
+      returnStatus: o.returnStatus || null,
+      returnedAt: o.returnedAt || null,
+      courierTracking: o.courierTracking || null,
+      courierStatus: o.courierStatus || null,
+      estimatedDelivery: o.estimatedDelivery || null,
     };
-    db.prepare('INSERT INTO orders (id, customerId, product, amount, status, deliveredOn, returnRequested) VALUES (@id, @customerId, @product, @amount, @status, @deliveredOn, @returnRequested)').run(newOrder);
 
-    const newPayment = {
-      id: nextId('payments', 'PAY'),
-      orderId: newOrder.id,
-      customerId: customer.id,
-      amount: newOrder.amount,
-      gatewayStatus: order.gatewayStatus || 'success',
-      localStatus: order.localStatus || 'success',
-      timestamp: new Date().toISOString(),
-    };
-    db.prepare('INSERT INTO payments (id, orderId, customerId, amount, gatewayStatus, localStatus, timestamp) VALUES (@id, @orderId, @customerId, @amount, @gatewayStatus, @localStatus, @timestamp)').run(newPayment);
+    db.prepare(`
+      INSERT OR REPLACE INTO orders (
+        id, customerId, product, amount, status, deliveredAt, deliveredOn,
+        returnRequested, cancelledAt, cancellationReason, returnStatus,
+        returnedAt, courierTracking, courierStatus, estimatedDelivery
+      ) VALUES (
+        @id, @customerId, @product, @amount, @status, @deliveredAt, @deliveredOn,
+        @returnRequested, @cancelledAt, @cancellationReason, @returnStatus,
+        @returnedAt, @courierTracking, @courierStatus, @estimatedDelivery
+      )
+    `).run(orderRecord);
 
-    return { customer, order: rowToOrder(newOrder), payment: newPayment };
-  }
+    createdOrders.push(rowToOrder(orderRecord));
 
-  return { customer, order: null, payment: null };
+    // Create payment if amount is positive and order is not just cancelled without payment
+    if (orderAmount > 0) {
+      const paymentRecord = {
+        id: nextId('payments', 'PAY'),
+        orderId: orderRecord.id,
+        customerId: customer.id,
+        amount: orderRecord.amount,
+        status: o.gatewayStatus || 'success',
+        gatewayStatus: o.gatewayStatus || 'success',
+        localStatus: o.localStatus || 'success',
+        gatewayRef: `gw_auto_${Date.now()}_${index}`,
+        timestamp: new Date().toISOString(),
+      };
+
+      db.prepare(`
+        INSERT OR REPLACE INTO payments (
+          id, orderId, customerId, amount, status, gatewayStatus, localStatus, gatewayRef, timestamp
+        ) VALUES (
+          @id, @orderId, @customerId, @amount, @status, @gatewayStatus, @localStatus, @gatewayRef, @timestamp
+        )
+      `).run(paymentRecord);
+
+      createdPayments.push(paymentRecord);
+    }
+  });
+
+  return {
+    id: customer.id,
+    name: customer.name,
+    email: customer.email,
+    tier: customer.tier,
+    joinedOn: customer.joinedOn,
+    customer,
+    order: createdOrders[0] || null,
+    orders: createdOrders,
+    payment: createdPayments[0] || null,
+    payments: createdPayments,
+  };
 }
 
 module.exports = {

@@ -15,7 +15,7 @@ async function request(path, options = {}) {
   return data;
 }
 
-async function requestMultipart(path, formData, timeoutMs = 30000) {
+async function requestMultipart(path, formData, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -26,18 +26,19 @@ async function requestMultipart(path, formData, timeoutMs = 30000) {
     });
     const data = await res.json();
     if (!res.ok) {
-      const msg = data.details?.length
+      const msg = data.data?.reason || (data.details?.length
         ? `${data.error}: ${data.details.map((d) => d.message).join(', ')}`
-        : data.error || 'Request failed';
+        : data.error || 'Verification request failed');
       const err = new Error(msg);
       err.status = res.status;
       err.details = data.details;
+      err.data = data.data;
       throw err;
     }
     return data;
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error('Verification timed out — please try again.');
+      throw new Error('Verification timed out. Please try again.');
     }
     throw err;
   } finally {
@@ -97,5 +98,26 @@ export function getAdminOverview(adminPassword) {
   return request('/admin/overview', {
     method: 'POST',
     body: JSON.stringify({ adminPassword }),
+  });
+}
+
+export function getOrCreateAdminProfile({ email, name, adminPassword }) {
+  return request('/admin/profile', {
+    method: 'POST',
+    body: JSON.stringify({ email, name, adminPassword }),
+  });
+}
+
+export function updateAdminProfilePhoto({ email, photo, adminPassword }) {
+  return request('/admin/profile/photo', {
+    method: 'POST',
+    body: JSON.stringify({ email, photo, adminPassword }),
+  });
+}
+
+export function updateAdminProfileName({ email, name, adminPassword }) {
+  return request('/admin/profile/name', {
+    method: 'POST',
+    body: JSON.stringify({ email, name, adminPassword }),
   });
 }

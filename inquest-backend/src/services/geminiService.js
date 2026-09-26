@@ -5,19 +5,23 @@ if (!config.geminiApiKey) {
   console.warn('[geminiService] Warning: GEMINI_API_KEY not set. AI calls will fail.');
 }
 
-const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+const genAIPrimary = new GoogleGenerativeAI(config.geminiApiKey);
+const genAIBackup = config.geminiApiKeyBackup
+  ? new GoogleGenerativeAI(config.geminiApiKeyBackup)
+  : null;
 
-const MODEL_CHAIN = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
-const VISION_MODEL_CHAIN = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
-const CALL_TIMEOUT_MS = 12000;
-const VISION_TIMEOUT_MS = 20000;
+const MODEL_CHAIN = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
+const VISION_MODEL_CHAIN = ['gemini-flash-latest', 'gemini-3.6-flash'];
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+const CALL_TIMEOUT_MS = 8000;
+const VISION_TIMEOUT_MS = 9000;
+
+function isQuotaExhausted(err) {
+  return /429|quota|resource_exhausted/i.test(err?.message || '');
 }
 
 function isTransientError(err) {
-  return /503|overloaded|high demand|429|rate limit|quota|resource_exhausted/i.test(err.message);
+  return /503|overloaded|high demand/i.test(err?.message || '') || isQuotaExhausted(err);
 }
 
 function withTimeout(promise, ms) {
@@ -27,50 +31,57 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-async function generateContent(prompt) {
+async function tryModelChain(genAI, models, buildCall, timeoutMs) {
   let lastError;
-  for (const modelName of MODEL_CHAIN) {
+  for (const modelName of models) {
     const model = genAI.getGenerativeModel({ model: modelName });
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const result = await withTimeout(model.generateContent(prompt), CALL_TIMEOUT_MS);
-        return result.response.text();
-      } catch (err) {
-        lastError = err;
-        if (isTransientError(err) && attempt === 1) {
-          await sleep(400);
-          continue;
-        }
-        break;
-      }
+    try {
+      const result = await withTimeout(buildCall(model), timeoutMs);
+      return result.response.text();
+    } catch (err) {
+      lastError = err;
+      continue;
     }
   }
   throw lastError;
 }
 
 /**
- * Vision calls (ID verification) use a shorter model chain and a hard
- * per-attempt timeout, since this path is on the critical path of a
- * live scanning UI — it must fail fast rather than hang.
+ * Runs the model chain against the primary key. If every model on the
+ * primary key fails due to quota exhaustion (free-tier daily limit) and a
+ * backup key is configured, retries the full chain once on the backup key
+ * before giving up.
  */
+async function runWithKeyFallback(models, buildCall, timeoutMs) {
+  try {
+    return await tryModelChain(genAIPrimary, models, buildCall, timeoutMs);
+  } catch (primaryErr) {
+    if (isQuotaExhausted(primaryErr) && genAIBackup) {
+      console.warn('[geminiService] Primary key quota exhausted — retrying with backup key');
+      try {
+        return await tryModelChain(genAIBackup, models, buildCall, timeoutMs);
+      } catch (backupErr) {
+        throw isQuotaExhausted(backupErr)
+          ? new Error(`GEMINI_QUOTA_EXHAUSTED: ${backupErr.message}`)
+          : backupErr;
+      }
+    }
+    throw isQuotaExhausted(primaryErr)
+      ? new Error(`GEMINI_QUOTA_EXHAUSTED: ${primaryErr.message}`)
+      : primaryErr;
+  }
+}
+
+async function generateContent(prompt) {
+  return runWithKeyFallback(MODEL_CHAIN, (model) => model.generateContent(prompt), CALL_TIMEOUT_MS);
+}
+
 async function generateVisionContent(prompt, images) {
-  let lastError;
   const parts = [
     { text: prompt },
     ...images.map((img) => ({ inlineData: { data: img.data, mimeType: img.mimeType } })),
   ];
-
-  for (const modelName of VISION_MODEL_CHAIN) {
-    const model = genAI.getGenerativeModel({ model: modelName });
-    try {
-      const result = await withTimeout(model.generateContent(parts), VISION_TIMEOUT_MS);
-      return result.response.text();
-    } catch (err) {
-      lastError = err;
-      continue; // try next model immediately, no retry-within-model for vision
-    }
-  }
-  throw lastError;
+  return runWithKeyFallback(VISION_MODEL_CHAIN, (model) => model.generateContent(parts), VISION_TIMEOUT_MS);
 }
 
 function extractJSON(raw) {
@@ -84,8 +95,13 @@ function extractJSON(raw) {
     const firstBrace = cleaned.indexOf('{');
     const lastBrace = cleaned.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      const candidate = cleaned.substring(firstBrace, lastBrace + 1);
-      return JSON.parse(candidate);
+      let candidate = cleaned.substring(firstBrace, lastBrace + 1);
+      candidate = candidate.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+      try {
+        return JSON.parse(candidate);
+      } catch (innerErr) {
+        throw initialErr;
+      }
     }
     throw initialErr;
   }
